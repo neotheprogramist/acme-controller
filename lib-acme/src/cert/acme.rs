@@ -9,7 +9,7 @@ const REPLAY_NONCE: &str = "replay-nonce";
 
 pub async fn new_directory() -> DirectoryUrls {
     let client = Client::new();
-    let directory_url = "https://acme-v02.api.letsencrypt.org/directory.";
+    let directory_url = "https://acme-v02.api.letsencrypt.org/directory";
     let response = client.get(directory_url).send().await.unwrap();
     let dir: Value = response.json().await.unwrap();
 
