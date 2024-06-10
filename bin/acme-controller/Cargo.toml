@@ -1,0 +1,17 @@
+[package]
+name = "acme-controller"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+base64.workspace = true
+openssl.workspace = true
+josekit.workspace = true
+serde_json.workspace = true
+reqwest.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_with.workspace = true
+tracing.workspace = true
+lib-acme.workspace = true
+clap.workspace = true
