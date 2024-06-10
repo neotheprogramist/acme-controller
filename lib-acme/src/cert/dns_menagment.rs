@@ -1,14 +1,18 @@
-use reqwest::Response;
 use reqwest::Client;
+use reqwest::Response;
 use serde_json::Value;
-pub async fn post_dns_record(body: String, domain: &str,api_token: &str,zone_id: &str) -> Response {
+pub async fn post_dns_record(
+    body: String,
+    domain: &str,
+    api_token: &str,
+    zone_id: &str,
+) -> Response {
     let url = format!(
         "https://api.cloudflare.com/client/v4/zones/{}/dns_records",
         zone_id
     );
     let client = reqwest::Client::new();
-
-    let response = client
+    client
         .post(&url)
         .bearer_auth(api_token)
         .body(format!(
@@ -16,14 +20,13 @@ pub async fn post_dns_record(body: String, domain: &str,api_token: &str,zone_id:
             "type": "TXT",
             "name": "_acme-challenge.{}",
             "content": "{}  ",
-            "ttl": 120
+            "ttl": 60
         }}"#,
             domain, body
         ))
         .send()
         .await
-        .unwrap();
-    response
+        .unwrap()
 }
 pub async fn get_acme_challenge_record_ids(
     api_token: &str,
@@ -85,33 +88,34 @@ pub async fn delete_dns_record(api_token: &str, zone_id: &str, domain: &str) {
 
 #[cfg(test)]
 mod test {
+    use std::env;
     #[tokio::test]
     async fn test_post_dns_record() {
-        let api_token = "bjlYz_K2uEn278Bcp2GY8hVEgokT-GZsOnFH2otq";
-        let zone_id = "c99a975281977d4a887921558d4fd76d";
+        let api_token = env::var("API_TOKEN").expect("API_TOKEN must be set");
+        let zone_id = env::var("ZONE_ID").expect("ZONE_ID must be set");
         let domain = "mateuszchudy.lat";
         let body = "test".to_string();
-        let response = super::post_dns_record(body, domain,&api_token,&zone_id).await;
+        let response = super::post_dns_record(body, domain, &api_token, &zone_id).await;
         println!("{:?}", response.text().await.unwrap());
         //assert_eq!(response.status().as_u16(), 200);
     }
     #[tokio::test]
     async fn test_get_dns_record_id() {
-        let api_token = "bjlYz_K2uEn278Bcp2GY8hVEgokT-GZsOnFH2otq";
-        let zone_id = "c99a975281977d4a887921558d4fd76d";
-        let domain = "mateuszchudy.lat";     
+        let api_token = env::var("API_TOKEN").expect("API_TOKEN must be set");
+        let zone_id = env::var("ZONE_ID").expect("ZONE_ID must be set");
+        let domain = "mateuszchudy.lat";
         println!(
             "{:?}",
-            super::get_acme_challenge_record_ids(api_token, zone_id, domain)
+            super::get_acme_challenge_record_ids(&api_token, &zone_id, domain)
                 .await
                 .unwrap()
         );
     }
     #[tokio::test]
     async fn test_delete_dns_record() {
-        let api_token = "bjlYz_K2uEn278Bcp2GY8hVEgokT-GZsOnFH2otq";
-        let zone_id = "c99a975281977d4a887921558d4fd76d";
+        let api_token = env::var("API_TOKEN").expect("API_TOKEN must be set");
+        let zone_id = env::var("ZONE_ID").expect("ZONE_ID must be set");
         let domain = "mateuszchudy.lat";
-        super::delete_dns_record(api_token, zone_id, domain).await;
-}
+        super::delete_dns_record(&api_token, &zone_id, domain).await;
+    }
 }

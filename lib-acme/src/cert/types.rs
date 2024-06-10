@@ -19,3 +19,50 @@ pub struct DirectoryUrls {
 pub fn base64(data: &impl Serialize) -> Result<String, serde_json::Error> {
     Ok(BASE64_URL_SAFE_NO_PAD.encode(serde_json::to_vec(data)?))
 }
+#[derive(Debug, PartialEq)]
+pub enum OrderStatus {
+    Valid,
+    Invalid,
+    Pending,
+    Ready,
+    Processing,
+    Unknown, // Default case for any unrecognized status
+}
+
+impl From<&str> for OrderStatus {
+    fn from(status: &str) -> Self {
+        match status {
+            "valid" => OrderStatus::Valid,
+            "invalid" => OrderStatus::Invalid,
+            "pending" => OrderStatus::Pending,
+            "ready" => OrderStatus::Ready,
+            "processing" => OrderStatus::Processing,
+            _ => OrderStatus::Unknown,
+        }
+    }
+}
+#[derive(Debug, PartialEq,Clone)]
+pub enum ChallangeType {
+    Dns01,
+    Http01,
+    TlsAlpn01,
+}
+impl From<&str> for ChallangeType {
+    fn from(challange_type: &str) -> Self {
+        match challange_type {
+            "dns-01" => ChallangeType::Dns01,
+            "http-01" => ChallangeType::Http01,
+            "tls-alpn-01" => ChallangeType::TlsAlpn01,
+            _ => panic!("Invalid challange type"),
+        }
+    }
+}
+impl ToString for ChallangeType {
+    fn to_string(&self) -> String {
+        match self {
+            ChallangeType::Dns01 => "dns-01".to_string(),
+            ChallangeType::Http01 => "http-01".to_string(),
+            ChallangeType::TlsAlpn01 => "tls-alpn-01".to_string(),
+        }
+    }
+}

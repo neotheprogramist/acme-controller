@@ -1,120 +1,36 @@
-use std::collections::BTreeMap;
-
-use base64::prelude::BASE64_URL_SAFE_NO_PAD;
-use base64::Engine;
+use josekit::jwk::alg::ec::EcCurve;
 use josekit::{jwk::alg::ec::EcKeyPair, jwt::JwtPayload};
-use openssl::hash::hash;
-use openssl::hash::MessageDigest;
-use openssl::pkey::PKey;
-use openssl::stack::Stack;
-use openssl::x509::extension::SubjectAlternativeName;
-use openssl::x509::X509NameBuilder;
-use openssl::x509::X509Req;
-use reqwest::{header, Client, Response};
-use serde_json::{json, Value};
+use reqwest::{Client, Response};
+use serde_json::Value;
+use std::fs::File;
+use std::io::Write;
 
-use openssl::ec::{EcGroup, EcKey};
-use openssl::nid::Nid;
 extern crate tracing;
-use crate::cert::dns_menagment::post_dns_record;
+use crate::cert::acme::{new_account, new_directory, submit_order};
+use crate::cert::crypto::{generate_csr, get_key_authorization};
+use crate::cert::dns_menagment::{delete_dns_record, post_dns_record};
+use crate::cert::types::{ChallangeType, OrderStatus};
 
+use super::acme::new_nonce;
+use super::http_request::post;
 use super::{create_jws::create_jws, types::DirectoryUrls};
-const JOSE_JSON: &str = "application/jose+json";
-const REPLAY_NONCE: &str = "replay-nonce";
 
-pub async fn new_directory() -> DirectoryUrls {
-    let client = Client::new();
-    let directory_url = "https://acme-v02.api.letsencrypt.org/directory";
-    let response = client.get(directory_url).send().await.unwrap();
-    let dir: Value = response.json().await.unwrap();
-
-    DirectoryUrls {
-        new_nonce: dir["newNonce"].as_str().unwrap().to_string(), // Extract as str and convert to String
-        new_account: dir["newAccount"].as_str().unwrap().to_string(),
-        new_order: dir["newOrder"].as_str().unwrap().to_string(),
-        new_authz: dir["newAuthz"].as_str().map(String::from), // Map to convert Option<&str> to Option<String>
-        revoke_cert: dir["revokeCert"].as_str().map(String::from),
-        key_change: dir["keyChange"].as_str().map(String::from),
-    }
-}
-
-pub async fn new_nonce(client: &Client, url_value: String) -> String {
-    let response = client.head(url_value).send().await.unwrap();
-    let nonce = response
-        .headers()
-        .get(REPLAY_NONCE)
-        .unwrap()
-        .to_str()
-        .unwrap()
-        .to_string();
-    nonce
-}
-
-pub async fn new_account(
-    client: &Client,
-    urls: DirectoryUrls,
-    contact_mail: String,
+pub async fn dns_01_challange(
+    tokens: Vec<(String, String)>,
     ec_key_pair: EcKeyPair,
-) -> reqwest::Response {
-    // "termsOfServiceAgreed": true,
-    // "contact": ["mailto:mail@example.com"]
-    let mut payload = JwtPayload::new();
-    let nonce = new_nonce(&client, urls.clone().new_nonce).await;
-    let _ = payload.set_claim("termsOfServiceAgreed", Some(serde_json::Value::Bool(true)));
-    let _ = payload.set_claim(
-        "contact",
-        Some(serde_json::Value::Array(vec![serde_json::Value::String(
-            format!("mailto:{}", contact_mail),
-        )])),
-    );
-    let body = create_jws(nonce, payload, urls.new_account.clone(), ec_key_pair, None).unwrap();
-    post(client, urls.new_account, body).await
-}
-
-pub async fn submit_order(
-    client: &Client,
-    urls: DirectoryUrls,
-    identifiers: Vec<&str>,
-    ec_key_pair: EcKeyPair,
-    kid: String,
-) -> reqwest::Response {
-    let mut payload = JwtPayload::new();
-    let nonce = new_nonce(&client, urls.clone().new_nonce).await;
-    let _ = payload.set_claim(
-        "identifiers",
-        Some(serde_json::Value::Array(
-            identifiers
-                .iter()
-                .map(|x| {
-                    serde_json::json!({
-                        "type": "dns",
-                        "value": x
-                    })
-                })
-                .collect::<Vec<serde_json::Value>>(),
-        )),
-    );
-    let body = create_jws(
-        nonce,
-        payload,
-        urls.new_order.clone(),
-        ec_key_pair,
-        Some(kid),
-    )
-    .unwrap();
-    post(client, urls.new_order, body).await
-}
-pub async fn dns_01_challange(tokens: Vec<String>, identifiers: Vec<&str>, ec_key_pair: EcKeyPair, api_token: &str, zone_id: &str){
-    for i in 0..tokens.len() {
-        let encoded_digest = get_key_authorization(tokens[i].clone(), ec_key_pair.clone());
-        post_dns_record(encoded_digest.clone(), identifiers[i], &api_token, &zone_id).await;
+    api_token: &str,
+    zone_id: &str,
+) {
+    for token in tokens {
+        let encoded_digest = get_key_authorization(token.1.clone(), ec_key_pair.clone());
+        post_dns_record(encoded_digest.clone(), &token.0, api_token, zone_id).await;
     }
     // Post the DNS record
-    println!("DNS record posted, waiting for the DNS changes to propagate...");
+    tracing::trace!("DNS record posted, waiting for the DNS changes to propagate...");
     // Wait for the DNS changes to propagate
-    for i in 1..13 {
+    for i in 1..8 {
         tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
-        println!(
+        tracing::trace!(
             "Waiting for DNS changes to propagate... time passed :{} seconds",
             i * 10
         );
@@ -131,9 +47,12 @@ pub async fn fetch_authorizations(response: Value) -> Vec<String> {
         .collect();
     authorizations
 }
-pub async fn choose_challanges(authorizations: Vec<String>, challange_type: &str) -> Vec<String> {
+pub async fn choose_challanges(
+    authorizations: Vec<String>,
+    challange_type: ChallangeType,
+) -> Vec<(String, String)> {
     let client = Client::new();
-    let mut challanges: Vec<String> = Vec::new();
+    let mut challanges: Vec<(String, String)> = Vec::new();
     for authz in authorizations {
         let response = client.get(authz).send().await.unwrap();
         let authz = response.json::<Value>().await.unwrap();
@@ -141,19 +60,21 @@ pub async fn choose_challanges(authorizations: Vec<String>, challange_type: &str
             .as_array()
             .unwrap()
             .iter()
-            .find(|challange| challange["type"] == challange_type)
+            .find(|challange| challange["type"] == challange_type.to_string())
             .unwrap();
-        challanges.push(challange["url"].as_str().unwrap().to_string());
+        let domain = authz["identifier"]["value"].as_str().unwrap().to_string();
+        let challange = challange["url"].as_str().unwrap().to_string();
+        challanges.push((challange, domain));
     }
     challanges
 }
-pub async fn get_challanges_tokens(challanges: Vec<String>) -> Vec<String> {
+pub async fn get_challanges_tokens(challanges: Vec<(String, String)>) -> Vec<(String, String)> {
     let client = Client::new();
-    let mut details: Vec<String> = Vec::new();
+    let mut details: Vec<(String, String)> = Vec::new();
     for challange in challanges {
-        let response = client.get(challange).send().await.unwrap();
+        let response = client.get(challange.0).send().await.unwrap();
         let detail = response.json::<Value>().await.unwrap();
-        details.push(detail["token"].as_str().unwrap().to_string());
+        details.push((challange.1, detail["token"].as_str().unwrap().to_string()));
     }
     details
 }
@@ -176,50 +97,11 @@ pub async fn respond_to_challange(
     post(&client, challange_url, body).await
 }
 
-pub async fn post(client: &Client, url_value: String, body: String) -> reqwest::Response {
-    let response = client
-        .post(url_value)
-        .header(header::CONTENT_TYPE, JOSE_JSON)
-        .body(body)
-        .send()
-        .await
-        .unwrap();
-    response
-}
-
-
 pub async fn fetch_order_status(client: &Client, order_url: &str) -> Result<Value, reqwest::Error> {
     let response = client.get(order_url).send().await?;
     response.json::<Value>().await
 }
-pub fn get_thumbprint(ec_key_pair: EcKeyPair) -> String {
-    let jwk_json = ec_key_pair.to_jwk_public_key();
-    let mut jwk_btree_map = BTreeMap::new();
-    jwk_btree_map.insert("crv", jwk_json.curve().unwrap().to_string());
-    jwk_btree_map.insert("kty", jwk_json.key_type().to_string());
-    jwk_btree_map.insert(
-        "x",
-        jwk_json
-            .parameter("x")
-            .unwrap()
-            .as_str()
-            .unwrap()
-            .to_string(),
-    );
-    jwk_btree_map.insert(
-        "y",
-        jwk_json
-            .parameter("y")
-            .unwrap()
-            .as_str()
-            .unwrap()
-            .to_string(),
-    );
-    // Convert to canonical JSON string
-    let sorted_jwk_json = json!(jwk_btree_map).to_string();
-    let jwk_digest = hash(MessageDigest::sha256(), sorted_jwk_json.as_bytes()).unwrap();
-    BASE64_URL_SAFE_NO_PAD.encode(&jwk_digest)
-}
+
 pub async fn order_finalization(
     csr: String,
     urls: DirectoryUrls,
@@ -242,93 +124,118 @@ pub async fn order_finalization(
     post(&client, finalization_url, body).await
 }
 
-pub fn get_key_authorization(token: String, ec_key_pair: EcKeyPair) -> String {
-    let thumbprint = get_thumbprint(ec_key_pair);
-    // Construct key authorization using the token and the thumbprint
-    let key_authorization = format!("{}.{}", token, thumbprint);
-    // Compute SHA-256 hash of the key authorization
-    let key_auth_digest = hash(MessageDigest::sha256(), key_authorization.as_bytes()).unwrap();
-    BASE64_URL_SAFE_NO_PAD.encode(&key_auth_digest)
-}
+pub async fn certificate_procedure(
+    contact_mail: String,
+    identifiers: Vec<&str>,
+    challange_type: ChallangeType,
+    api_token: &str,
+    zone_id: &str,
+) {
+    let ec_key_pair = EcKeyPair::generate(EcCurve::P256).unwrap();
+    let client = Client::new();
+    let urls = new_directory().await;
 
-pub fn generate_csr(domain: Vec<&str>) -> Result<String, openssl::error::ErrorStack> {
-    let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1)?;
-    let ec_key = EcKey::generate(&group)?;
-    let pkey = PKey::from_ec_key(ec_key)?;
-    // Build the X509 request with the domain name
-    let mut name_builder = X509NameBuilder::new()?;
-    name_builder.append_entry_by_nid(openssl::nid::Nid::COMMONNAME, domain[0])?;
-    let name = name_builder.build();
+    let account_url = new_account(
+        &client,
+        urls.clone(),
+        contact_mail.clone(),
+        ec_key_pair.clone(),
+    )
+    .await;
 
-    let mut san_builder = SubjectAlternativeName::new();
-    for d in domain {
-        san_builder.dns(d);
+    let order = submit_order(
+        &client,
+        urls.clone(),
+        identifiers.clone(),
+        ec_key_pair.clone(),
+        account_url.to_string(),
+    )
+    .await;
+
+    let order_url = order
+        .headers()
+        .get("location")
+        .ok_or("Location header missing")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned(); // Make an owned copy of the URL
+
+    tracing::trace!("Order URL: {}", order_url);
+    // Deserialize the JSON body for further processing
+    let order_body: Value = order.json().await.unwrap();
+
+    // Now that we have both `order_url` and `order_body`, we no longer need the original `order`
+    let authorizations = fetch_authorizations(order_body).await;
+    let challanges = choose_challanges(authorizations, challange_type.clone()).await;
+
+    let tokens = get_challanges_tokens(challanges.clone()).await;
+    // processing dns-01 challenges
+    if challange_type == ChallangeType::Dns01 {
+        dns_01_challange(tokens, ec_key_pair.clone(), api_token, zone_id).await;
     }
-
-    let mut req_builder = X509Req::builder()?;
-    req_builder.set_subject_name(&name)?;
-    req_builder.set_pubkey(&pkey)?;
-    // Add the SAN extension (Subject Alternative Name)
-    let context = req_builder.x509v3_context(None);
-    let san_extension = san_builder.build(&context)?;
-    let mut stack = Stack::new()?;
-    stack.push(san_extension)?;
-    req_builder.add_extensions(&stack)?;
-    req_builder.sign(&pkey, openssl::hash::MessageDigest::sha256())?;
-
-    let req = req_builder.build();
-    let csr_der = req.to_der()?;
-    let csr_base64 = BASE64_URL_SAFE_NO_PAD.encode(&csr_der);
-    Ok(csr_base64)
-}
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use josekit::jwk::alg::ec::{EcCurve, EcKeyPair};
-    #[tokio::test]
-    async fn test_new_directory() -> Result<(), Box<dyn std::error::Error>> {
-        let urls = new_directory().await;
-        assert_eq!(
-            urls.new_nonce,
-            "https://acme-v02.api.letsencrypt.org/acme/new-nonce"
-        );
-        assert_eq!(
-            urls.new_account,
-            "https://acme-v02.api.letsencrypt.org/acme/new-acct"
-        );
-        assert_eq!(
-            urls.new_order,
-            "https://acme-v02.api.letsencrypt.org/acme/new-order"
-        );
-        Ok(())
+    // Respond to the challenges
+    for challange in challanges.clone() {
+        respond_to_challange(
+            challange.0.clone(),
+            ec_key_pair.clone(),
+            account_url.to_string().clone(),
+        )
+        .await;
     }
+    tracing::trace!("Challenge responded to, waiting for the order to complete...");
+    loop {
+        let order_status = fetch_order_status(&client, &order_url).await.unwrap();
+        let status_str = order_status["status"].as_str().unwrap_or("unknown");
+        let status = OrderStatus::from(status_str);
 
-    #[tokio::test]
-    async fn test_new_nonce() -> Result<(), Box<dyn std::error::Error>> {
-        let client = Client::new();
-        let urls = new_directory().await;
-        let nonce = new_nonce(&client, urls.new_nonce).await;
-        println!("{:?}", nonce);
-        Ok(())
-    }
-    #[tokio::test]
-    async fn test_new_account() -> Result<(), Box<dyn std::error::Error>> {
-        let ec_key_pair = EcKeyPair::generate(EcCurve::P256)?;
-        let client = Client::new();
-        let urls = new_directory().await;
-        let response = new_account(&client, urls, "mateo@gmail.com".to_string(), ec_key_pair).await;
-        let mut accountlink: String = "".to_string();
-        if response.status().is_success() {
-            // Attempt to extract the "location" header
-            if let Some(location) = response.headers().get("location") {
-                accountlink = location.to_str()?.to_string();
-            } else {
-                println!("Account URL not found")
+        match status {
+            OrderStatus::Valid => {
+                tracing::trace!("Order is completed successfully. Downloading certificate...");
+                let certificate_url = order_status["certificate"].as_str().unwrap();
+                tracing::trace!("Certificate URL: {}", certificate_url);
+                let certificate = client.get(certificate_url).send().await.unwrap();
+                let certificate_body = certificate.text().await.unwrap();
+                // Define the path to save the certificate
+                let path = "certificate.pem"; // Adjust the path as necessary
+                                              // Write to a file
+                let mut file = File::create(path).unwrap();
+                file.write_all(certificate_body.as_bytes()).unwrap();
+                tracing::trace!("Certificate saved to {}", path);
+                for id in identifiers.clone() {
+                    delete_dns_record(api_token, zone_id, id).await;
+                }
+                break;
             }
-        } else {
-            println!("Account creation failed: {:?}", response.text().await?);
+            OrderStatus::Invalid => {
+                tracing::trace!("Order has failed.");
+                break;
+            }
+            OrderStatus::Pending => {
+                tracing::trace!("Order is pending...");
+                tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
+            }
+            OrderStatus::Ready => {
+                tracing::trace!("Order is ready... finalizing.");
+                let finalization_url = order_status["finalize"].as_str().unwrap();
+                let csr = generate_csr(identifiers.clone()).unwrap();
+                let _response = order_finalization(
+                    csr,
+                    urls.clone(),
+                    ec_key_pair.clone(),
+                    account_url.to_string(),
+                    finalization_url.to_string(),
+                )
+                .await;
+            }
+            OrderStatus::Processing => {
+                tracing::trace!("Order is processing...");
+                tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
+            }
+            OrderStatus::Unknown => {
+                tracing::trace!("Order status: {:?}", status);
+                break;
+            }
         }
-        println!("{:?}", accountlink);
-        Ok(())
     }
 }
