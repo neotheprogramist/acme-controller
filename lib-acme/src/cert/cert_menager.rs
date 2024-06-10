@@ -2,8 +2,8 @@ use josekit::jwk::alg::ec::EcCurve;
 use josekit::{jwk::alg::ec::EcKeyPair, jwt::JwtPayload};
 use reqwest::{Client, Response};
 use serde_json::Value;
-use std::fs::File;
-use std::io::Write;
+// use std::fs::File;
+// use std::io::Write;
 
 extern crate tracing;
 use crate::cert::acme::{new_account, new_directory, submit_order};
@@ -197,11 +197,12 @@ pub async fn certificate_procedure(
                 let certificate = client.get(certificate_url).send().await.unwrap();
                 let certificate_body = certificate.text().await.unwrap();
                 // Define the path to save the certificate
-                let path = "certificate.pem"; // Adjust the path as necessary
-                                              // Write to a file
-                let mut file = File::create(path).unwrap();
-                file.write_all(certificate_body.as_bytes()).unwrap();
-                tracing::trace!("Certificate saved to {}", path);
+                println!("{}", certificate_body);
+                // let path = "certificate.pem"; // Adjust the path as necessary
+                //                               // Write to a file
+                // let mut file = File::create(path).unwrap();
+                // file.write_all(certificate_body.as_bytes()).unwrap();
+                // tracing::trace!("Certificate saved to {}", path);
                 for id in identifiers.clone() {
                     delete_dns_record(api_token, zone_id, id).await;
                 }
