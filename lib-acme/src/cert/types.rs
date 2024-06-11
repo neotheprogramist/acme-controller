@@ -3,7 +3,6 @@ use std::fmt::Display;
 use base64::prelude::{Engine, BASE64_URL_SAFE_NO_PAD};
 use serde::Deserialize;
 use serde::Serialize;
-
 use super::errors::AcmeErrors;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -77,6 +76,20 @@ impl Display for ChallangeType {
             ChallangeType::Dns01 => write!(f, "dns-01"),
             ChallangeType::Http01 => write!(f, "http-01"),
             ChallangeType::TlsAlpn01 => write!(f, "tls-alpn-01"),
+        }
+    }
+}
+
+#[derive(Debug,Clone,Serialize,Deserialize, PartialEq)]
+pub enum Environment {
+    Staging,
+    Production,
+}
+impl Display for Environment {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Environment::Staging => write!(f, "staging"),
+            Environment::Production => write!(f, "production")
         }
     }
 }

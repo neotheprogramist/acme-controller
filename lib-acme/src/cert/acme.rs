@@ -1,14 +1,23 @@
+use std::env;
+
 use josekit::{jwk::alg::ec::EcKeyPair, jwt::JwtPayload};
 use reqwest::{Client, Response};
 extern crate tracing;
 use super::errors::AcmeErrors;
 use super::http_request::post;
+use super::types::Environment;
 use super::{create_jws::create_jws, types::DirectoryUrls};
 const REPLAY_NONCE: &str = "replay-nonce";
 
 pub(crate) async fn new_directory() -> Result<DirectoryUrls, AcmeErrors> {
     let client = Client::new();
-    let directory_url = "https://acme-v02.api.letsencrypt.org/directory";
+    let enviornment = env::var("ENVIRONMENT").expect("ENVIRONMENT must be set");
+    let mut directory_url = String::new();
+    if enviornment == Environment::Production.to_string() {
+        directory_url = env::var("DIRECTORY_URL").expect("DIRECTORY_URL must be set");
+    }else if enviornment == Environment::Staging.to_string(){
+        directory_url = env::var("STAGING_DIRECTORY_URL").expect("STAGING_DIRECTORY_URL must be set");
+    }
     let response = client.get(directory_url).send().await?;
     Ok(response.json().await?)
 }

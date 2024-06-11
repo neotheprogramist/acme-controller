@@ -13,7 +13,7 @@ use super::errors::AcmeErrors;
 use super::http_request::post;
 use super::{create_jws::create_jws, types::DirectoryUrls};
 
-pub(crate) async fn dns_01_challange(
+pub(crate) async fn perform_dns_01_challange(
     tokens: Vec<(String, String)>,
     ec_key_pair: EcKeyPair,
     api_token: &str,
@@ -121,7 +121,7 @@ pub(crate) async fn fetch_order_status(
     response.json::<Value>().await
 }
 
-pub(crate) async fn order_finalization(
+pub(crate) async fn finalize_order(
     csr: String,
     urls: DirectoryUrls,
     ec_key_pair: EcKeyPair,
@@ -165,7 +165,7 @@ pub(crate) async fn order_finalization(
 /// - `ChallengeNotFound`: If the specified type of challenge is not found in the authorization details.
 /// - Any other errors as defined in `AcmeErrors` that may occur during the process.
 
-pub async fn certificate_procedure(
+pub async fn issue_cerificate(
     contact_mail: String,
     identifiers: Vec<&str>,
     challange_type: ChallangeType,
@@ -211,7 +211,7 @@ pub async fn certificate_procedure(
     let tokens = get_challanges_tokens(challanges.clone()).await?;
     // processing dns-01 challenges
     if challange_type == ChallangeType::Dns01 {
-        dns_01_challange(tokens, ec_key_pair.clone(), api_token, zone_id).await?;
+        perform_dns_01_challange(tokens, ec_key_pair.clone(), api_token, zone_id).await?;
     }
     // Respond to the challenges
     for challange in challanges.clone() {
@@ -260,7 +260,7 @@ pub async fn certificate_procedure(
                     .ok_or(AcmeErrors::ConversionError)?
                     .to_string();
                 let csr = generate_csr(identifiers.clone())?;
-                let _response = order_finalization(
+                let _response = finalize_order(
                     csr,
                     urls.clone(),
                     ec_key_pair.clone(),
