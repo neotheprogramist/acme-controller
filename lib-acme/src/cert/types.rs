@@ -1,10 +1,14 @@
+use std::fmt::Display;
+
 use base64::prelude::{Engine, BASE64_URL_SAFE_NO_PAD};
 use serde::Deserialize;
 use serde::Serialize;
 
+use super::errors::AcmeErrors;
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct DirectoryUrls {
+pub(crate) struct DirectoryUrls {
     pub(crate) new_nonce: String,
     pub(crate) new_account: String,
     pub(crate) new_order: String,
@@ -16,11 +20,11 @@ pub struct DirectoryUrls {
     pub(crate) key_change: Option<String>,
 }
 
-pub fn base64(data: &impl Serialize) -> Result<String, serde_json::Error> {
+pub(crate) fn base64(data: &impl Serialize) -> Result<String, AcmeErrors> {
     Ok(BASE64_URL_SAFE_NO_PAD.encode(serde_json::to_vec(data)?))
 }
 #[derive(Debug, PartialEq)]
-pub enum OrderStatus {
+pub(crate) enum OrderStatus {
     Valid,
     Invalid,
     Pending,
@@ -41,7 +45,17 @@ impl From<&str> for OrderStatus {
         }
     }
 }
-#[derive(Debug, PartialEq,Clone)]
+/// Represents the types of challenges supported by the ACME protocol for domain validation.
+///
+/// Each challenge type corresponds to a specific method of proving control over a domain.
+/// These challenges are part of the process to securely issue certificates.
+///
+/// # Variants
+///
+/// - `Dns01`: Represents the DNS-01 challenge which involves creating a DNS record to prove control of a domain .
+/// - `Http01`: NOT IMPLEMENTED - Represents the HTTP-01 challenge where a file must be made available at a specific URL on the domain.
+/// - `TlsAlpn01`: NOT IMPLEMENTED - Represents the TLS-ALPN-01 challenge that involves proving control over a domain by responding to TLS connections in a specific way.
+#[derive(Debug, PartialEq, Clone)]
 pub enum ChallangeType {
     Dns01,
     Http01,
@@ -57,12 +71,12 @@ impl From<&str> for ChallangeType {
         }
     }
 }
-impl ToString for ChallangeType {
-    fn to_string(&self) -> String {
+impl Display for ChallangeType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ChallangeType::Dns01 => "dns-01".to_string(),
-            ChallangeType::Http01 => "http-01".to_string(),
-            ChallangeType::TlsAlpn01 => "tls-alpn-01".to_string(),
+            ChallangeType::Dns01 => write!(f, "dns-01"),
+            ChallangeType::Http01 => write!(f, "http-01"),
+            ChallangeType::TlsAlpn01 => write!(f, "tls-alpn-01"),
         }
     }
 }

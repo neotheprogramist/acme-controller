@@ -2,9 +2,6 @@ use josekit::jwk::alg::ec::EcCurve;
 use josekit::{jwk::alg::ec::EcKeyPair, jwt::JwtPayload};
 use reqwest::{Client, Response};
 use serde_json::Value;
-// use std::fs::File;
-// use std::io::Write;
-
 extern crate tracing;
 use crate::cert::acme::{new_account, new_directory, submit_order};
 use crate::cert::crypto::{generate_csr, get_key_authorization};
@@ -12,18 +9,19 @@ use crate::cert::dns_menagment::{delete_dns_record, post_dns_record};
 use crate::cert::types::{ChallangeType, OrderStatus};
 
 use super::acme::new_nonce;
+use super::errors::AcmeErrors;
 use super::http_request::post;
 use super::{create_jws::create_jws, types::DirectoryUrls};
 
-pub async fn dns_01_challange(
+pub(crate) async fn dns_01_challange(
     tokens: Vec<(String, String)>,
     ec_key_pair: EcKeyPair,
     api_token: &str,
     zone_id: &str,
-) {
+) -> Result<(), AcmeErrors> {
     for token in tokens {
-        let encoded_digest = get_key_authorization(token.1.clone(), ec_key_pair.clone());
-        post_dns_record(encoded_digest.clone(), &token.0, api_token, zone_id).await;
+        let encoded_digest = get_key_authorization(&token.1.clone(), &ec_key_pair.clone())?;
+        post_dns_record(encoded_digest.clone(), &token.0, api_token, zone_id).await?;
     }
     // Post the DNS record
     tracing::trace!("DNS record posted, waiting for the DNS changes to propagate...");
@@ -36,93 +34,136 @@ pub async fn dns_01_challange(
         );
     }
     tracing::trace!("DNS changes should have propagated by now");
+    Ok(())
 }
-pub async fn fetch_authorizations(response: Value) -> Vec<String> {
-    let order = response;
-    let authorizations: Vec<String> = order["authorizations"]
+pub(crate) fn fetch_authorizations(response: &Value) -> Result<Vec<String>, AcmeErrors> {
+    let authorizations: Result<Vec<String>, AcmeErrors> = response["authorizations"]
         .as_array()
-        .unwrap()
+        .ok_or(AcmeErrors::ConversionError)?
         .iter()
-        .map(|authz| authz.as_str().unwrap().to_string())
+        .map(|authz| {
+            authz
+                .as_str()
+                .ok_or(AcmeErrors::ConversionError)
+                .map(ToString::to_string)
+        })
         .collect();
     authorizations
 }
-pub async fn choose_challanges(
+pub(crate) async fn choose_challanges(
     authorizations: Vec<String>,
     challange_type: ChallangeType,
-) -> Vec<(String, String)> {
+) -> Result<Vec<(String, String)>, AcmeErrors> {
     let client = Client::new();
     let mut challanges: Vec<(String, String)> = Vec::new();
     for authz in authorizations {
-        let response = client.get(authz).send().await.unwrap();
-        let authz = response.json::<Value>().await.unwrap();
+        let response = client.get(authz).send().await?;
+        let authz = response.json::<Value>().await?;
         let challange = authz["challenges"]
             .as_array()
-            .unwrap()
+            .ok_or(AcmeErrors::ConversionError)?
             .iter()
             .find(|challange| challange["type"] == challange_type.to_string())
-            .unwrap();
-        let domain = authz["identifier"]["value"].as_str().unwrap().to_string();
-        let challange = challange["url"].as_str().unwrap().to_string();
+            .ok_or(AcmeErrors::ChallangeNotFound)?;
+        let domain = authz["identifier"]["value"]
+            .as_str()
+            .ok_or(AcmeErrors::ConversionError)?
+            .to_string();
+        let challange = challange["url"]
+            .as_str()
+            .ok_or(AcmeErrors::ConversionError)?
+            .to_string();
         challanges.push((challange, domain));
     }
-    challanges
+    Ok(challanges)
 }
-pub async fn get_challanges_tokens(challanges: Vec<(String, String)>) -> Vec<(String, String)> {
+pub(crate) async fn get_challanges_tokens(
+    challanges: Vec<(String, String)>,
+) -> Result<Vec<(String, String)>, AcmeErrors> {
     let client = Client::new();
     let mut details: Vec<(String, String)> = Vec::new();
     for challange in challanges {
-        let response = client.get(challange.0).send().await.unwrap();
-        let detail = response.json::<Value>().await.unwrap();
-        details.push((challange.1, detail["token"].as_str().unwrap().to_string()));
+        let response = client.get(challange.0).send().await?;
+        let detail = response.json::<Value>().await?;
+        details.push((
+            challange.1,
+            detail["token"]
+                .as_str()
+                .ok_or(AcmeErrors::ConversionError)?
+                .to_string(),
+        ));
     }
-    details
+    Ok(details)
 }
-pub async fn respond_to_challange(
+pub(crate) async fn respond_to_challange(
     challange_url: String,
     ec_key_pair: EcKeyPair,
     kid: String,
-) -> Response {
+) -> Result<Response, AcmeErrors> {
     let client = Client::new();
     let payload = JwtPayload::new();
-    let nonce = new_nonce(&client, challange_url.clone()).await;
+    let nonce = new_nonce(&client, challange_url.clone()).await?;
     let body = create_jws(
-        nonce,
-        payload,
+        &nonce,
+        &payload,
         challange_url.clone(),
-        ec_key_pair,
+        &ec_key_pair,
         Some(kid),
-    )
-    .unwrap();
+    )?;
     post(&client, challange_url, body).await
 }
 
-pub async fn fetch_order_status(client: &Client, order_url: &str) -> Result<Value, reqwest::Error> {
+pub(crate) async fn fetch_order_status(
+    client: &Client,
+    order_url: &str,
+) -> Result<Value, reqwest::Error> {
     let response = client.get(order_url).send().await?;
     response.json::<Value>().await
 }
 
-pub async fn order_finalization(
+pub(crate) async fn order_finalization(
     csr: String,
     urls: DirectoryUrls,
     ec_key_pair: EcKeyPair,
     kid: String,
     finalization_url: String,
-) -> Response {
+) -> Result<Response, AcmeErrors> {
     let client = Client::new();
     let mut payload = JwtPayload::new();
-    let nonce = new_nonce(&client, urls.clone().new_nonce).await;
+    let nonce = new_nonce(&client, urls.clone().new_nonce).await?;
     let _ = payload.set_claim("csr", Some(serde_json::Value::String(csr)));
     let body = create_jws(
-        nonce,
-        payload,
+        &nonce,
+        &payload,
         finalization_url.clone(),
-        ec_key_pair,
+        &ec_key_pair,
         Some(kid),
-    )
-    .unwrap();
+    )?;
     post(&client, finalization_url, body).await
 }
+/// Completes the entire certificate provisioning process using the ACME protocol.
+/// This function performs multiple steps: it creates an account, submits a certificate order,
+/// handles domain validation challenges, and retrieves the issued certificate.
+///
+/// # Parameters
+/// - `contact_mail`: The contact email address used for the ACME account registration.
+/// - `identifiers`: A list of domain names (identifiers) for which the certificate should be issued.
+/// - `challange_type`: The type of ACME challenge to perform for domain validation (e.g., DNS-01).
+/// - `api_token`: API token used for DNS provider to create and delete DNS records.
+/// - `zone_id`: The DNS zone identifier used for creating DNS records.
+///
+/// # Returns
+/// Returns a `Result<(), AcmeErrors>` indicating the success or failure of the certificate provisioning process.
+/// On success, it ensures that the certificate has been properly issued and handled.
+///
+/// # Errors
+/// This function can return `AcmeErrors` which encapsulates several types of errors:
+/// - `RequestFailed`: Errors that occur during HTTP requests to the ACME server.
+/// - `MissingLocationHeader`: If the HTTP response from the ACME server is missing expected headers.
+/// - `ConversionError`: Issues with data type conversions, typically when parsing server responses.
+/// - `MissingNonce`: If a required nonce is missing during the ACME request process.
+/// - `ChallengeNotFound`: If the specified type of challenge is not found in the authorization details.
+/// - Any other errors as defined in `AcmeErrors` that may occur during the process.
 
 pub async fn certificate_procedure(
     contact_mail: String,
@@ -130,10 +171,10 @@ pub async fn certificate_procedure(
     challange_type: ChallangeType,
     api_token: &str,
     zone_id: &str,
-) {
-    let ec_key_pair = EcKeyPair::generate(EcCurve::P256).unwrap();
+) -> Result<(), AcmeErrors> {
+    let ec_key_pair = EcKeyPair::generate(EcCurve::P256)?;
     let client = Client::new();
-    let urls = new_directory().await;
+    let urls = new_directory().await?;
 
     let account_url = new_account(
         &client,
@@ -141,7 +182,7 @@ pub async fn certificate_procedure(
         contact_mail.clone(),
         ec_key_pair.clone(),
     )
-    .await;
+    .await?;
 
     let order = submit_order(
         &client,
@@ -150,29 +191,27 @@ pub async fn certificate_procedure(
         ec_key_pair.clone(),
         account_url.to_string(),
     )
-    .await;
+    .await?;
 
     let order_url = order
         .headers()
         .get("location")
-        .ok_or("Location header missing")
-        .unwrap()
-        .to_str()
-        .unwrap()
+        .ok_or(AcmeErrors::MissingLocationHeader)?
+        .to_str()?
         .to_owned(); // Make an owned copy of the URL
 
     tracing::trace!("Order URL: {}", order_url);
     // Deserialize the JSON body for further processing
-    let order_body: Value = order.json().await.unwrap();
+    let order_body: Value = order.json().await?;
 
     // Now that we have both `order_url` and `order_body`, we no longer need the original `order`
-    let authorizations = fetch_authorizations(order_body).await;
-    let challanges = choose_challanges(authorizations, challange_type.clone()).await;
+    let authorizations = fetch_authorizations(&order_body)?;
+    let challanges = choose_challanges(authorizations, challange_type.clone()).await?;
 
-    let tokens = get_challanges_tokens(challanges.clone()).await;
+    let tokens = get_challanges_tokens(challanges.clone()).await?;
     // processing dns-01 challenges
     if challange_type == ChallangeType::Dns01 {
-        dns_01_challange(tokens, ec_key_pair.clone(), api_token, zone_id).await;
+        dns_01_challange(tokens, ec_key_pair.clone(), api_token, zone_id).await?;
     }
     // Respond to the challenges
     for challange in challanges.clone() {
@@ -181,30 +220,28 @@ pub async fn certificate_procedure(
             ec_key_pair.clone(),
             account_url.to_string().clone(),
         )
-        .await;
+        .await?;
     }
     tracing::trace!("Challenge responded to, waiting for the order to complete...");
     loop {
-        let order_status = fetch_order_status(&client, &order_url).await.unwrap();
-        let status_str = order_status["status"].as_str().unwrap_or("unknown");
+        let order_status = fetch_order_status(&client, &order_url).await?;
+        let status_str = order_status["status"]
+            .as_str()
+            .ok_or(AcmeErrors::ConversionError)?;
         let status = OrderStatus::from(status_str);
 
         match status {
             OrderStatus::Valid => {
                 tracing::trace!("Order is completed successfully. Downloading certificate...");
-                let certificate_url = order_status["certificate"].as_str().unwrap();
+                let certificate_url = order_status["certificate"]
+                    .as_str()
+                    .ok_or(AcmeErrors::ConversionError)?;
                 tracing::trace!("Certificate URL: {}", certificate_url);
-                let certificate = client.get(certificate_url).send().await.unwrap();
-                let certificate_body = certificate.text().await.unwrap();
-                // Define the path to save the certificate
-                println!("{}", certificate_body);
-                // let path = "certificate.pem"; // Adjust the path as necessary
-                //                               // Write to a file
-                // let mut file = File::create(path).unwrap();
-                // file.write_all(certificate_body.as_bytes()).unwrap();
-                // tracing::trace!("Certificate saved to {}", path);
+                let certificate = client.get(certificate_url).send().await?;
+                let certificate_body = certificate.text().await?;
+                println!("{certificate_body}");
                 for id in identifiers.clone() {
-                    delete_dns_record(api_token, zone_id, id).await;
+                    delete_dns_record(api_token, zone_id, id).await?;
                 }
                 break;
             }
@@ -218,8 +255,11 @@ pub async fn certificate_procedure(
             }
             OrderStatus::Ready => {
                 tracing::trace!("Order is ready... finalizing.");
-                let finalization_url = order_status["finalize"].as_str().unwrap();
-                let csr = generate_csr(identifiers.clone()).unwrap();
+                let finalization_url = order_status["finalize"]
+                    .as_str()
+                    .ok_or(AcmeErrors::ConversionError)?
+                    .to_string();
+                let csr = generate_csr(identifiers.clone())?;
                 let _response = order_finalization(
                     csr,
                     urls.clone(),
@@ -239,4 +279,5 @@ pub async fn certificate_procedure(
             }
         }
     }
+    Ok(())
 }

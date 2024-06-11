@@ -1,9 +1,9 @@
 use acme_controller::CliInput;
 use clap::Parser;
-use lib_acme::cert::cert_menager::certificate_procedure;
+use lib_acme::cert::{cert_menager::certificate_procedure, errors::AcmeErrors};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), AcmeErrors> {
     let args = CliInput::parse();
 
     tracing_subscriber::registry()
@@ -27,5 +27,7 @@ async fn main() {
         api_token,
         zone_id,
     )
-    .await;
+    .await?;
+
+    Ok(())
 }

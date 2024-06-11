@@ -13,15 +13,20 @@ use openssl::x509::X509Req;
 use serde_json::json;
 use std::collections::BTreeMap;
 
-pub fn get_key_authorization(token: String, ec_key_pair: EcKeyPair) -> String {
-    let thumbprint = get_thumbprint(ec_key_pair);
+use super::errors::AcmeErrors;
+
+pub(crate) fn get_key_authorization(
+    token: &str,
+    ec_key_pair: &EcKeyPair,
+) -> Result<String, AcmeErrors> {
+    let thumbprint = get_thumbprint(ec_key_pair)?;
     // Construct key authorization using the token and the thumbprint
-    let key_authorization = format!("{}.{}", token, thumbprint);
+    let key_authorization = format!("{token}.{thumbprint}");
     // Compute SHA-256 hash of the key authorization
-    let key_auth_digest = hash(MessageDigest::sha256(), key_authorization.as_bytes()).unwrap();
-    BASE64_URL_SAFE_NO_PAD.encode(key_auth_digest)
+    let key_auth_digest = hash(MessageDigest::sha256(), key_authorization.as_bytes())?;
+    Ok(BASE64_URL_SAFE_NO_PAD.encode(key_auth_digest))
 }
-pub fn generate_csr(domain: Vec<&str>) -> Result<String, openssl::error::ErrorStack> {
+pub(crate) fn generate_csr(domain: Vec<&str>) -> Result<String, AcmeErrors> {
     let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1)?;
     let ec_key = EcKey::generate(&group)?;
     let pkey = PKey::from_ec_key(ec_key)?;
@@ -52,31 +57,34 @@ pub fn generate_csr(domain: Vec<&str>) -> Result<String, openssl::error::ErrorSt
     Ok(csr_base64)
 }
 
-pub fn get_thumbprint(ec_key_pair: EcKeyPair) -> String {
+pub(crate) fn get_thumbprint(ec_key_pair: &EcKeyPair) -> Result<String, AcmeErrors> {
     let jwk_json = ec_key_pair.to_jwk_public_key();
     let mut jwk_btree_map = BTreeMap::new();
-    jwk_btree_map.insert("crv", jwk_json.curve().unwrap().to_string());
+    jwk_btree_map.insert(
+        "crv",
+        jwk_json.curve().ok_or(AcmeErrors::MissingKey)?.to_string(),
+    );
     jwk_btree_map.insert("kty", jwk_json.key_type().to_string());
     jwk_btree_map.insert(
         "x",
         jwk_json
             .parameter("x")
-            .unwrap()
+            .ok_or(AcmeErrors::MissingKey)?
             .as_str()
-            .unwrap()
+            .ok_or(AcmeErrors::ConversionError)?
             .to_string(),
     );
     jwk_btree_map.insert(
         "y",
         jwk_json
             .parameter("y")
-            .unwrap()
+            .ok_or(AcmeErrors::MissingKey)?
             .as_str()
-            .unwrap()
+            .ok_or(AcmeErrors::ConversionError)?
             .to_string(),
     );
     // Convert to canonical JSON string
     let sorted_jwk_json = json!(jwk_btree_map).to_string();
-    let jwk_digest = hash(MessageDigest::sha256(), sorted_jwk_json.as_bytes()).unwrap();
-    BASE64_URL_SAFE_NO_PAD.encode(jwk_digest)
+    let jwk_digest = hash(MessageDigest::sha256(), sorted_jwk_json.as_bytes())?;
+    Ok(BASE64_URL_SAFE_NO_PAD.encode(jwk_digest))
 }

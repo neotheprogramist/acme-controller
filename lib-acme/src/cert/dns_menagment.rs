@@ -1,121 +1,111 @@
 use reqwest::Client;
 use reqwest::Response;
 use serde_json::Value;
-pub async fn post_dns_record(
+
+use super::errors::AcmeErrors;
+pub(crate) async fn post_dns_record(
     body: String,
     domain: &str,
     api_token: &str,
     zone_id: &str,
-) -> Response {
-    let url = format!(
-        "https://api.cloudflare.com/client/v4/zones/{}/dns_records",
-        zone_id
-    );
+) -> Result<Response, AcmeErrors> {
+    let url = format!("https://api.cloudflare.com/client/v4/zones/{zone_id}/dns_records");
     let client = reqwest::Client::new();
-    client
+    Ok(client
         .post(&url)
         .bearer_auth(api_token)
         .body(format!(
             r#"{{
             "type": "TXT",
-            "name": "_acme-challenge.{}",
-            "content": "{}  ",
+            "name": "_acme-challenge.{domain}",
+            "content": "{body}  ",
             "ttl": 60
-        }}"#,
-            domain, body
+        }}"#
         ))
         .send()
-        .await
-        .unwrap()
+        .await?)
 }
-pub async fn get_acme_challenge_record_ids(
+pub(crate) async fn get_acme_challenge_record_ids(
     api_token: &str,
     zone_id: &str,
     domain: &str,
-) -> Option<Vec<String>> {
+) -> Result<Vec<String>, AcmeErrors> {
     let url = format!(
-        "https://api.cloudflare.com/client/v4/zones/{}/dns_records?type=TXT&name=_acme-challenge.{}",
-        zone_id, domain
+        "https://api.cloudflare.com/client/v4/zones/{zone_id}/dns_records?type=TXT&name=_acme-challenge.{domain}"
     );
 
     let client = Client::new();
 
-    let response = client
-        .get(&url)
-        .bearer_auth(api_token)
-        .send()
-        .await
-        .unwrap();
+    let response = client.get(&url).bearer_auth(api_token).send().await?;
 
-    if response.status().is_success() {
-        let body = response.text().await.unwrap();
-        let json: Value = serde_json::from_str(&body).unwrap();
+    let body = response.text().await?;
+    let json: Value = serde_json::from_str(&body)?;
 
-        let mut ids = Vec::new();
+    let mut ids = Vec::new();
 
-        // Check each record to see if it's a TXT record with the desired prefix
-        if let Some(records) = json["result"].as_array() {
-            for record in records {
-                if record["type"] == "TXT"
-                    && record["name"]
-                        .as_str()
-                        .map_or(false, |n| n.starts_with("_acme-challenge"))
-                {
-                    if let Some(id) = record["id"].as_str() {
-                        ids.push(id.to_string());
-                    }
+    // Check each record to see if it's a TXT record with the desired prefix
+    if let Some(records) = json["result"].as_array() {
+        for record in records {
+            if record["type"] == "TXT"
+                && record["name"]
+                    .as_str()
+                    .map_or(false, |n| n.starts_with("_acme-challenge"))
+            {
+                if let Some(id) = record["id"].as_str() {
+                    ids.push(id.to_string());
                 }
             }
         }
-        Some(ids)
-    } else {
-        None
     }
+    Ok(ids)
 }
-pub async fn delete_dns_record(api_token: &str, zone_id: &str, domain: &str) {
-    let ids = get_acme_challenge_record_ids(api_token, zone_id, domain)
-        .await
-        .unwrap();
+pub(crate) async fn delete_dns_record(
+    api_token: &str,
+    zone_id: &str,
+    domain: &str,
+) -> Result<(), AcmeErrors> {
+    let ids = get_acme_challenge_record_ids(api_token, zone_id, domain).await?;
     let client = reqwest::Client::new();
     for id in ids {
-        let url = format!(
-            "https://api.cloudflare.com/client/v4/zones/{}/dns_records/{}",
-            zone_id, id
-        );
+        let url = format!("https://api.cloudflare.com/client/v4/zones/{zone_id}/dns_records/{id}");
         let _ = client.delete(&url).bearer_auth(api_token).send().await;
     }
+    Ok(())
 }
 
 #[cfg(test)]
 mod test {
     use std::env;
+
+    use crate::cert::errors::AcmeErrors;
     #[tokio::test]
-    async fn test_post_dns_record() {
+    async fn test_post_dns_record() -> Result<(), AcmeErrors> {
         let api_token = env::var("API_TOKEN").expect("API_TOKEN must be set");
         let zone_id = env::var("ZONE_ID").expect("ZONE_ID must be set");
         let domain = "mateuszchudy.lat";
         let body = "test".to_string();
-        let response = super::post_dns_record(body, domain, &api_token, &zone_id).await;
-        println!("{:?}", response.text().await.unwrap());
+        let response = super::post_dns_record(body, domain, &api_token, &zone_id).await?;
+        println!("{:?}", response.text().await?);
+        Ok(())
         //assert_eq!(response.status().as_u16(), 200);
     }
     #[tokio::test]
-    async fn test_get_dns_record_id() {
+    async fn test_get_dns_record_id() -> Result<(), AcmeErrors> {
         let api_token = env::var("API_TOKEN").expect("API_TOKEN must be set");
         let zone_id = env::var("ZONE_ID").expect("ZONE_ID must be set");
         let domain = "mateuszchudy.lat";
         println!(
             "{:?}",
-            super::get_acme_challenge_record_ids(&api_token, &zone_id, domain)
-                .await
-                .unwrap()
+            super::get_acme_challenge_record_ids(&api_token, &zone_id, domain).await?
         );
+        Ok(())
     }
     #[tokio::test]
-    async fn test_delete_dns_record() {
+    async fn test_delete_dns_record() -> Result<(), AcmeErrors> {
         let api_token = env::var("API_TOKEN").expect("API_TOKEN must be set");
         let zone_id = env::var("ZONE_ID").expect("ZONE_ID must be set");
         let domain = "mateuszchudy.lat";
-        super::delete_dns_record(&api_token, &zone_id, domain).await;
+        super::delete_dns_record(&api_token, &zone_id, domain).await?;
+        Ok(())
     }
 }
