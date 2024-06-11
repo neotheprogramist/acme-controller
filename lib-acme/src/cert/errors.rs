@@ -66,4 +66,8 @@ pub enum AcmeErrors {
 
     #[error("The specified challenge was not found in the server's response")]
     ChallangeNotFound,
+    #[error("Error in making order")]
+    OrderError,
+    #[error("Error in making account")]
+    AccountError,
 }

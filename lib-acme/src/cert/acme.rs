@@ -1,24 +1,17 @@
-use std::env;
-
 use josekit::{jwk::alg::ec::EcKeyPair, jwt::JwtPayload};
 use reqwest::{Client, Response};
+use serde_json::Value;
 extern crate tracing;
+use super::cert_menager::fetch_authorizations;
 use super::errors::AcmeErrors;
 use super::http_request::post;
-use super::types::Environment;
+use super::types::{AccountCredentials, Order, OrderStatus};
 use super::{create_jws::create_jws, types::DirectoryUrls};
 const REPLAY_NONCE: &str = "replay-nonce";
 
-pub(crate) async fn new_directory() -> Result<DirectoryUrls, AcmeErrors> {
+pub(crate) async fn new_directory(dir_url: &str) -> Result<DirectoryUrls, AcmeErrors> {
     let client = Client::new();
-    let enviornment = env::var("ENVIRONMENT").expect("ENVIRONMENT must be set");
-    let mut directory_url = String::new();
-    if enviornment == Environment::Production.to_string() {
-        directory_url = env::var("DIRECTORY_URL").expect("DIRECTORY_URL must be set");
-    }else if enviornment == Environment::Staging.to_string(){
-        directory_url = env::var("STAGING_DIRECTORY_URL").expect("STAGING_DIRECTORY_URL must be set");
-    }
-    let response = client.get(directory_url).send().await?;
+    let response = client.get(dir_url).send().await?;
     Ok(response.json().await?)
 }
 
@@ -37,9 +30,9 @@ pub(crate) async fn new_account(
     urls: DirectoryUrls,
     contact_mail: String,
     ec_key_pair: EcKeyPair,
-) -> Result<String, AcmeErrors> {
+) -> Result<AccountCredentials, AcmeErrors> {
     let mut payload = JwtPayload::new();
-    let nonce = new_nonce(client, urls.new_nonce).await?;
+    let nonce = new_nonce(client, urls.new_nonce.clone()).await?;
     let _ = payload.set_claim("termsOfServiceAgreed", Some(serde_json::Value::Bool(true)));
     let _ = payload.set_claim(
         "contact",
@@ -54,14 +47,24 @@ pub(crate) async fn new_account(
         &ec_key_pair,
         None,
     )?;
-    let response = post(client, urls.new_account, body).await?;
+    let response = post(client, urls.new_account.clone(), body).await?;
+    if response.status().as_u16() != 201 {
+        Err(AcmeErrors::AccountError)}
+    else{
+        parse_account(response, ec_key_pair)
+    }
+}
+pub(crate) fn parse_account(response: Response,ec_key_pair: EcKeyPair)->Result<AccountCredentials,AcmeErrors>{
     let account_url = response
         .headers()
         .get("location")
         .ok_or(AcmeErrors::MissingLocationHeader)?
         .to_str()?
         .to_owned();
-    Ok(account_url)
+    Ok(AccountCredentials {
+        account_url,
+        account_key: ec_key_pair,
+    })
 }
 
 pub(crate) async fn submit_order(
@@ -70,7 +73,7 @@ pub(crate) async fn submit_order(
     identifiers: Vec<&str>,
     ec_key_pair: EcKeyPair,
     kid: String,
-) -> Result<Response, AcmeErrors> {
+) -> Result<Order, AcmeErrors> {
     let mut payload = JwtPayload::new();
     let nonce = new_nonce(client, urls.clone().new_nonce).await?;
     let _ = payload.set_claim(
@@ -94,7 +97,47 @@ pub(crate) async fn submit_order(
         &ec_key_pair,
         Some(kid),
     )?;
-    post(client, urls.new_order, body).await
+    let response = post(client, urls.new_order, body).await?;
+    if response.status().as_u16() != 201 {
+        Err(AcmeErrors::OrderError)
+    } else {
+        parse_order(response).await
+    }
+}
+pub(crate) async fn parse_order(response: reqwest::Response) -> Result<Order, AcmeErrors> {
+    let url = response
+        .headers()
+        .get("location")
+        .ok_or(AcmeErrors::MissingLocationHeader)?
+        .to_str()?
+        .to_owned();
+    let body: Value = response.json().await?;
+    let authorizations = fetch_authorizations(&body.clone())?;
+
+    let identifiers = body.clone()["identifiers"]
+        .as_array()
+        .ok_or(AcmeErrors::ConversionError)?
+        .iter()
+        .map(|x| x["value"].as_str().unwrap().to_string())
+        .collect();
+    let finalize_url = body.clone()["finalize"]
+        .as_str()
+        .ok_or(AcmeErrors::ConversionError)?
+        .to_string();
+    let body_cloned = body.clone();
+    let status_str = body_cloned["status"]
+        .as_str()
+        .ok_or(AcmeErrors::ConversionError)?;
+
+    let status = OrderStatus::from(status_str);
+    Ok(Order {
+        url,
+        finalize_url,
+        authorizations,
+        identifiers,
+        status,
+        certificate: None,
+    })
 }
 
 #[cfg(test)]
@@ -103,7 +146,7 @@ mod tests {
     use josekit::jwk::alg::ec::{EcCurve, EcKeyPair};
     #[tokio::test]
     async fn test_new_directory() -> Result<(), AcmeErrors> {
-        let urls = new_directory().await?;
+        let urls = new_directory("https://acme-staging-v02.api.letsencrypt.org/directory").await?;
         assert_eq!(
             urls.new_nonce,
             "https://acme-v02.api.letsencrypt.org/acme/new-nonce"
@@ -122,7 +165,7 @@ mod tests {
     #[tokio::test]
     async fn test_new_nonce() -> Result<(), AcmeErrors> {
         let client = Client::new();
-        let urls = new_directory().await?;
+        let urls = new_directory("https://acme-staging-v02.api.letsencrypt.org/directory").await?;
         let nonce = new_nonce(&client, urls.new_nonce).await;
         println!("{:?}", nonce);
         Ok(())
@@ -131,9 +174,33 @@ mod tests {
     async fn test_new_account() -> Result<(), AcmeErrors> {
         let ec_key_pair = EcKeyPair::generate(EcCurve::P256)?;
         let client = Client::new();
-        let urls = new_directory().await?;
-        let response = new_account(&client, urls, "mateo@gmail.com".to_string(), ec_key_pair).await;
-        println!("{:?}", response);
+        let urls = new_directory("https://acme-staging-v02.api.letsencrypt.org/directory").await?;
+        let account =
+            new_account(&client, urls, "mateo@gmail.com".to_string(), ec_key_pair).await?;
+        println!("{:?}", account);
+        Ok(())
+    }
+    #[tokio::test]
+    async fn test_submit_order() -> Result<(), AcmeErrors> {
+        let ec_key_pair = EcKeyPair::generate(EcCurve::P256)?;
+        let client = Client::new();
+        let urls = new_directory("https://acme-staging-v02.api.letsencrypt.org/directory").await?;
+        let account = new_account(
+            &client,
+            urls.clone(),
+            "mateo@gmail.com".to_string(),
+            ec_key_pair,
+        )
+        .await?;
+        let order = submit_order(
+            &client,
+            urls,
+            vec!["mateo.com"],
+            account.account_key,
+            account.account_url,
+        )
+        .await?;
+        println!("{:?}", order);
         Ok(())
     }
 }

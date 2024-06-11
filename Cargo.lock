@@ -827,6 +827,7 @@ name = "lib-acme"
 version = "0.1.0"
 dependencies = [
  "base64 0.21.7",
+ "clap",
  "josekit",
  "openssl",
  "reqwest",
@@ -836,6 +837,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
+ "url",
 ]
 
 [[package]]

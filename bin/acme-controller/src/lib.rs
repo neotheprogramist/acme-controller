@@ -1,4 +1,5 @@
 use clap::Parser;
+use lib_acme::cert::types::Environment;
 use serde::{Deserialize, Serialize};
 
 #[derive(Parser, Debug, Serialize, Deserialize)]
@@ -14,6 +15,12 @@ pub struct CliInput {
     pub api_token: String,
     #[arg(short = 'z', long, env)]
     pub zone_id: String,
+    #[arg(short = 'e', long, env,value_enum,default_value_t = Environment::Production)]
+    pub environment: Environment, 
+    #[arg(short = 'd', long, env)]
+    pub directory_url:Option<String>,
+    #[arg(short = 's', long, env)]
+    pub staging_directory_url:Option<String>,
 }
 
 impl CliInput {
@@ -26,13 +33,13 @@ impl CliInput {
     pub fn new() -> Self {
         let tmp = CliInput::parse();
         let processed_identifiers = tmp.split_identifiers();
-        return CliInput {
+        CliInput {
             identifiers: processed_identifiers,
             ..tmp
-        };
+        }
     }
     pub fn identifiers(&self) -> Vec<&str> {
-        self.identifiers.iter().map(|x| x.as_str()).to_owned().collect()
+        self.identifiers.iter().map(String::as_str).clone().collect()
     }
 
 }

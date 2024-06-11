@@ -1,9 +1,12 @@
 use std::fmt::Display;
 
 use base64::prelude::{Engine, BASE64_URL_SAFE_NO_PAD};
+use josekit::jwk::alg::ec::EcKeyPair;
 use serde::Deserialize;
 use serde::Serialize;
 use super::errors::AcmeErrors;
+use clap::ValueEnum;
+use serde_json::Value;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -22,7 +25,7 @@ pub(crate) struct DirectoryUrls {
 pub(crate) fn base64(data: &impl Serialize) -> Result<String, AcmeErrors> {
     Ok(BASE64_URL_SAFE_NO_PAD.encode(serde_json::to_vec(data)?))
 }
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq,Clone)]
 pub(crate) enum OrderStatus {
     Valid,
     Invalid,
@@ -80,7 +83,7 @@ impl Display for ChallangeType {
     }
 }
 
-#[derive(Debug,Clone,Serialize,Deserialize, PartialEq)]
+#[derive(Debug,Clone,Serialize,Deserialize, PartialEq,ValueEnum)]
 pub enum Environment {
     Staging,
     Production,
@@ -92,4 +95,46 @@ impl Display for Environment {
             Environment::Production => write!(f, "production")
         }
     }
+}
+#[derive(Debug, Clone)]
+pub(crate) struct AccountCredentials {
+    pub(crate) account_url: String,
+    pub(crate) account_key: EcKeyPair,
+}
+#[derive(Debug, Clone)]
+pub(crate) struct Order {
+    pub(crate) url: String,
+    pub(crate) status: OrderStatus,
+    pub(crate) finalize_url: String,
+    pub(crate) identifiers: Vec<String>,
+    pub(crate) authorizations: Vec<String>,
+    pub(crate) certificate: Option<String>,
+}
+impl Order {
+    pub(crate) async fn update_status(&mut self)->Result<(),AcmeErrors>{
+        let client = reqwest::Client::new();
+        let response = client.get(&self.url).send().await?;
+        let order_status: Value = response.json().await?;
+        let status_str = order_status["status"]
+        .as_str()
+        .ok_or(AcmeErrors::ConversionError)?;
+        let status = OrderStatus::from(status_str);
+        self.status = status;
+        if self.status == OrderStatus::Valid {
+            self.certificate = Some(order_status["certificate"]
+            .as_str()
+            .ok_or(AcmeErrors::ConversionError)?
+            .to_owned());
+        }
+        Ok(())
+    }
+}
+#[derive(Debug, Clone)]
+pub(crate) struct Challange{
+    pub(crate) url:String,
+    pub(crate) domain:String,
+}
+pub(crate) struct Token{
+    pub(crate) domain:String,
+    pub(crate) token:String,
 }

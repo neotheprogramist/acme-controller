@@ -17,12 +17,17 @@ async fn main() -> Result<(), AcmeErrors> {
     let challange_type = lib_acme::cert::types::ChallangeType::from(challange_type);
     let api_token: &str = args.api_token.as_str();
     let zone_id: &str = args.zone_id.as_str();
+    let dir_url: &str = match args.environment {
+        lib_acme::cert::types::Environment::Staging => args.staging_directory_url.as_ref().unwrap(),
+        lib_acme::cert::types::Environment::Production => args.directory_url.as_ref().unwrap(),
+    };
     issue_cerificate(
         contact_mail,
         identifiers,
         challange_type,
         api_token,
         zone_id,
+        dir_url
     )
     .await?;
 
