@@ -70,4 +70,6 @@ pub enum AcmeErrors {
     OrderError,
     #[error("Error in making account")]
     AccountError,
+    #[error("Error in parsing url")]
+    ParseError(#[from] url::ParseError),
 }

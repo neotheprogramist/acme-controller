@@ -2,6 +2,7 @@ use josekit::jwk::alg::ec::EcCurve;
 use josekit::{jwk::alg::ec::EcKeyPair, jwt::JwtPayload};
 use reqwest::{Client, Response};
 use serde_json::Value;
+use url::Url;
 extern crate tracing;
 use crate::cert::acme::{new_account, new_directory, submit_order};
 use crate::cert::crypto::{generate_csr, get_key_authorization};
@@ -70,10 +71,10 @@ pub(crate) async fn choose_challanges(
             .as_str()
             .ok_or(AcmeErrors::ConversionError)?
             .to_string();
-        let url = challange["url"]
+        let url_str = challange["url"]
             .as_str()
-            .ok_or(AcmeErrors::ConversionError)?
-            .to_string();
+            .ok_or(AcmeErrors::ConversionError)?;
+        let url = Url::parse(url_str).map_err(|_| AcmeErrors::ConversionError)?;
         challanges.push(Challange { url, domain });
     }
     Ok(challanges)
@@ -98,9 +99,9 @@ pub(crate) async fn get_challanges_tokens(
     Ok(details)
 }
 pub(crate) async fn respond_to_challange(
-    challange_url: String,
+    challange_url: Url,
     ec_key_pair: EcKeyPair,
-    kid: String,
+    kid: Url,
 ) -> Result<Response, AcmeErrors> {
     let client = Client::new();
     let payload = JwtPayload::new();
@@ -119,8 +120,8 @@ pub(crate) async fn finalize_order(
     csr: String,
     urls: DirectoryUrls,
     ec_key_pair: EcKeyPair,
-    kid: String,
-    finalization_url: String,
+    kid: Url,
+    finalization_url: Url,
 ) -> Result<Response, AcmeErrors> {
     let client = Client::new();
     let mut payload = JwtPayload::new();
@@ -160,7 +161,7 @@ pub(crate) async fn finalize_order(
 /// - Any other errors as defined in `AcmeErrors` that may occur during the process.
 
 pub async fn issue_cerificate(
-    contact_mail: String,
+    contact_mail: Vec<String>,
     identifiers: Vec<&str>,
     challange_type: ChallangeType,
     api_token: &str,
@@ -214,7 +215,7 @@ pub async fn issue_cerificate(
         match status {
             OrderStatus::Valid => {
                 tracing::trace!("Order is completed successfully. Downloading certificate...");
-                let certificate_url = order.certificate.clone().unwrap();
+                let certificate_url = order.certificate.clone().ok_or(AcmeErrors::ConversionError)?;
                 tracing::trace!("Certificate URL: {}", certificate_url);
                 let certificate = client.get(certificate_url).send().await?;
                 let certificate_body = certificate.text().await?;
@@ -240,8 +241,8 @@ pub async fn issue_cerificate(
                     csr,
                     urls.clone(),
                     account.account_key.clone(),
-                    account.account_url.to_string(),
-                    finalization_url.to_string(),
+                    account.account_url.clone(),
+                    finalization_url,
                 )
                 .await;
             }

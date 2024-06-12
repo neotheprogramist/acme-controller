@@ -1,6 +1,27 @@
 use reqwest::Client;
 use reqwest::Response;
 use serde_json::Value;
+use serde::Serialize;
+
+#[derive(Serialize)]
+struct DnsRecord {
+    #[serde(rename = "type")]
+    record_type: String,
+    name: String,
+    content: String,
+    ttl: u32,
+}
+
+impl DnsRecord {
+    pub fn new(domain: &str, content: &str) -> Self {
+        Self {
+            record_type: "TXT".to_string(),
+            name: format!("_acme-challenge.{domain}"),
+            content: content.to_string(),
+            ttl: 60,
+        }
+    }
+}
 
 use super::errors::AcmeErrors;
 pub(crate) async fn post_dns_record(
@@ -11,17 +32,12 @@ pub(crate) async fn post_dns_record(
 ) -> Result<Response, AcmeErrors> {
     let url = format!("https://api.cloudflare.com/client/v4/zones/{zone_id}/dns_records");
     let client = reqwest::Client::new();
+    let record = DnsRecord::new(domain, &body);
+    let record_json = serde_json::to_string(&record)?;
     Ok(client
         .post(&url)
         .bearer_auth(api_token)
-        .body(format!(
-            r#"{{
-            "type": "TXT",
-            "name": "_acme-challenge.{domain}",
-            "content": "{body}  ",
-            "ttl": 60
-        }}"#
-        ))
+        .body(record_json)
         .send()
         .await?)
 }

@@ -8,7 +8,7 @@ pub struct CliInput {
     #[arg(short = 'i', long, env)]
     pub identifiers: Vec<String>,
     #[arg(short = 'm', long, env)]
-    pub contact_mail: String,
+    pub contact_mail: Vec<String>,
     #[arg(short = 'c', long, env)]
     pub challange_type: String,
     #[arg(short = 't', long, env)]
@@ -30,11 +30,19 @@ impl CliInput {
             .flat_map(|s| s.split(',').map(str::trim).map(String::from))
             .collect()
     }
+    pub fn split_contact_mail(&self) -> Vec<String> {
+        self.contact_mail
+            .iter()
+            .flat_map(|s| s.split(',').map(str::trim).map(String::from))
+            .collect()
+    }
     pub fn new() -> Self {
         let tmp = CliInput::parse();
         let processed_identifiers = tmp.split_identifiers();
+        let processed_contact_mail = tmp.split_contact_mail();
         CliInput {
             identifiers: processed_identifiers,
+            contact_mail: processed_contact_mail,
             ..tmp
         }
     }

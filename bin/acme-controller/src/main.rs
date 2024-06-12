@@ -12,7 +12,7 @@ async fn main() -> Result<(), AcmeErrors> {
         .init();
     let args = CliInput::new();
     let identifiers: Vec<&str> = args.identifiers();
-    let contact_mail: String = args.contact_mail.clone();
+    let contact_mail: Vec<String> = args.contact_mail.clone();
     let challange_type: &str = args.challange_type.as_str();
     let challange_type = lib_acme::cert::types::ChallangeType::from(challange_type);
     let api_token: &str = args.api_token.as_str();
