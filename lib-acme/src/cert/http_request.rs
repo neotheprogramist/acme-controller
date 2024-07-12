@@ -1,6 +1,6 @@
+use super::errors::AcmeErrors;
 use reqwest::{header, Client, Response};
 use url::Url;
-use super::errors::AcmeErrors;
 
 const JOSE_JSON: &str = "application/jose+json";
 

@@ -1,7 +1,7 @@
 use reqwest::Client;
 use reqwest::Response;
-use serde_json::Value;
 use serde::Serialize;
+use serde_json::Value;
 
 #[derive(Serialize)]
 struct DnsRecord {
