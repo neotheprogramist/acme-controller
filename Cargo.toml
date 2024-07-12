@@ -7,7 +7,6 @@ version = "0.1.0"
 edition = "2021"
 
 [workspace.dependencies]
-lib-acme = {path = "lib-acme"}
 base64 = "0.21.0"
 openssl = "0.10.64"
 josekit = "0.8.6"
