@@ -37,7 +37,7 @@ async fn main() -> Result<(), AcmeErrors> {
         api_token,
         zone_id,
         dir_url,
-        &path,
+        path,
     )
     .await?;
     Ok(())

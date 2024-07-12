@@ -271,7 +271,7 @@ pub async fn issue_certificate(
 
 pub(crate) fn get_certificate_expiration(cert: &X509) -> Result<&Asn1TimeRef, AcmeErrors> {
     let expiration_date: &Asn1TimeRef = cert.not_after();
-    return Ok(expiration_date);
+    Ok(expiration_date)
 }
 
 /// Saves an X509 certificate to a specified file path.
@@ -374,10 +374,10 @@ pub async fn renew_certificate(
     loop {
         interval.tick().await;
         tracing::trace!("Checking certificate expiration date...");
-        let expiration_date = get_certificate_expiration(&cert)?;
+        let expiration_date = get_certificate_expiration(cert)?;
         tracing::trace!("Certificate expiration date: {:?}", expiration_date);
         let now = Asn1Time::days_from_now(0)?;
-        if now.diff(&expiration_date)?.days > 30 {
+        if now.diff(expiration_date)?.days > 30 {
             tracing::trace!("Certificate is still valid.");
             continue;
         } else {
