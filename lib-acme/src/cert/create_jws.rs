@@ -1,5 +1,3 @@
-use std::fmt::Display;
-
 use crate::cert::types::base64;
 use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
@@ -9,6 +7,7 @@ use josekit::{
     jwt::JwtPayload,
 };
 use serde::Serialize;
+use std::fmt::Display;
 use url::Url;
 
 use super::errors::AcmeErrors;

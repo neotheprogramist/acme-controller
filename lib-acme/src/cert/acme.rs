@@ -4,7 +4,7 @@ use serde::Serialize;
 use serde_json::Value;
 use url::Url;
 extern crate tracing;
-use super::cert_menager::fetch_authorizations;
+use super::cert_manager::fetch_authorizations;
 use super::errors::AcmeErrors;
 use super::http_request::post;
 use super::types::{AccountCredentials, Order, OrderStatus};
@@ -27,9 +27,9 @@ impl Identifier {
     }
 }
 
-pub(crate) async fn new_directory(dir_url: &str) -> Result<DirectoryUrls, AcmeErrors> {
+pub(crate) async fn new_directory(dir_url: &Url) -> Result<DirectoryUrls, AcmeErrors> {
     let client = Client::new();
-    let response = client.get(dir_url).send().await?;
+    let response = client.get(dir_url.to_string()).send().await?;
     Ok(response.json().await?)
 }
 
@@ -164,13 +164,16 @@ pub(crate) async fn parse_order(response: reqwest::Response) -> Result<Order, Ac
 
 #[cfg(test)]
 mod tests {
-    use std::vec;
+    use std::{str::FromStr, vec};
 
     use super::*;
     use josekit::jwk::alg::ec::{EcCurve, EcKeyPair};
     #[tokio::test]
     async fn test_new_directory() -> Result<(), AcmeErrors> {
-        let urls = new_directory("https://acme-staging-v02.api.letsencrypt.org/directory").await?;
+        let urls = new_directory(&Url::from_str(
+            "https://acme-staging-v02.api.letsencrypt.org/directory",
+        )?)
+        .await?;
         assert_eq!(
             urls.new_account,
             Url::parse("https://acme-staging-v02.api.letsencrypt.org/acme/new-acct")?
@@ -181,7 +184,10 @@ mod tests {
     #[tokio::test]
     async fn test_new_nonce() -> Result<(), AcmeErrors> {
         let client = Client::new();
-        let urls = new_directory("https://acme-staging-v02.api.letsencrypt.org/directory").await?;
+        let urls = new_directory(&Url::from_str(
+            "https://acme-staging-v02.api.letsencrypt.org/directory",
+        )?)
+        .await?;
         let nonce = new_nonce(&client, urls.new_nonce).await;
         println!("{:?}", nonce);
         Ok(())
@@ -190,7 +196,10 @@ mod tests {
     async fn test_new_account() -> Result<(), AcmeErrors> {
         let ec_key_pair = EcKeyPair::generate(EcCurve::P256)?;
         let client = Client::new();
-        let urls = new_directory("https://acme-staging-v02.api.letsencrypt.org/directory").await?;
+        let urls = new_directory(&Url::from_str(
+            "https://acme-staging-v02.api.letsencrypt.org/directory",
+        )?)
+        .await?;
         let account = new_account(
             &client,
             urls,
@@ -205,7 +214,10 @@ mod tests {
     async fn test_submit_order() -> Result<(), AcmeErrors> {
         let ec_key_pair = EcKeyPair::generate(EcCurve::P256)?;
         let client = Client::new();
-        let urls = new_directory("https://acme-staging-v02.api.letsencrypt.org/directory").await?;
+        let urls = new_directory(&Url::from_str(
+            "https://acme-staging-v02.api.letsencrypt.org/directory",
+        )?)
+        .await?;
         let account = new_account(
             &client,
             urls.clone(),

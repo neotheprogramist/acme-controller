@@ -9,16 +9,15 @@ use std::path::Path;
 use tokio::time;
 use url::Url;
 extern crate tracing;
-use crate::cert::acme::{new_account, new_directory, submit_order};
-use crate::cert::crypto::{generate_csr, get_key_authorization};
-use crate::cert::dns_menagment::{delete_dns_record, post_dns_record};
-use crate::cert::types::{ChallangeType, OrderStatus};
-
 use super::acme::new_nonce;
 use super::errors::AcmeErrors;
 use super::http_request::post;
 use super::types::{Challange, Token};
 use super::{create_jws::create_jws, types::DirectoryUrls};
+use crate::cert::acme::{new_account, new_directory, submit_order};
+use crate::cert::crypto::{generate_csr, get_key_authorization};
+use crate::cert::dns_menagment::{delete_dns_record, post_dns_record};
+use crate::cert::types::{ChallangeType, OrderStatus};
 
 pub(crate) async fn perform_dns_01_challange(
     tokens: Vec<Token>,
@@ -147,7 +146,7 @@ pub(crate) async fn finalize_order(
 ///
 /// # Parameters
 /// - `contact_mail`: The contact email address used for the ACME account registration.
-/// - `identifiers`: A list of domain names (identifiers) for which the certificate should be issued.
+/// - `domain_identifiers`: A list of domain names (identifiers) for which the certificate should be issued.
 /// - `challange_type`: The type of ACME challenge to perform for domain validation (e.g., DNS-01).
 /// - `api_token`: API token used for DNS provider to create and delete DNS records.
 /// - `zone_id`: The DNS zone identifier used for creating DNS records.
@@ -167,11 +166,11 @@ pub(crate) async fn finalize_order(
 
 pub async fn issue_certificate(
     contact_mail: Vec<String>,
-    identifiers: Vec<&str>,
+    domain_identifiers: Vec<&str>,
     challange_type: ChallangeType,
     api_token: &str,
     zone_id: &str,
-    dir_url: &str,
+    dir_url: &Url,
     path: &Path,
 ) -> Result<(), AcmeErrors> {
     let ec_key_pair = EcKeyPair::generate(EcCurve::P256)?;
@@ -189,7 +188,7 @@ pub async fn issue_certificate(
     let mut order = submit_order(
         &client,
         urls.clone(),
-        identifiers.clone(),
+        domain_identifiers.clone(),
         ec_key_pair.clone(),
         account.account_url.clone(),
     )
@@ -233,11 +232,11 @@ pub async fn issue_certificate(
                 for id in order.identifiers.clone() {
                     delete_dns_record(api_token, zone_id, &id).await?;
                 }
-                break;
+                break Ok(());
             }
             OrderStatus::Invalid => {
                 tracing::trace!("Order has failed.");
-                Err(AcmeErrors::OrderError)?;
+                break Err(AcmeErrors::OrderError);
             }
             OrderStatus::Pending => {
                 tracing::trace!("Order is pending...");
@@ -246,7 +245,7 @@ pub async fn issue_certificate(
             OrderStatus::Ready => {
                 tracing::trace!("Order is ready... finalizing.");
                 let finalization_url = order.finalize_url.clone();
-                let csr = generate_csr(identifiers.clone())?;
+                let csr = generate_csr(domain_identifiers.clone())?;
                 let _response = finalize_order(
                     csr,
                     urls.clone(),
@@ -262,11 +261,10 @@ pub async fn issue_certificate(
             }
             OrderStatus::Unknown => {
                 tracing::trace!("Order status: {:?}", status);
-                Err(AcmeErrors::OrderError)?;
+                break Err(AcmeErrors::OrderError);
             }
         }
     }
-    Ok(())
 }
 
 pub(crate) fn get_certificate_expiration(cert: &X509) -> Result<&Asn1TimeRef, AcmeErrors> {
@@ -336,7 +334,7 @@ pub fn read_cert(path: &Path) -> Result<X509, AcmeErrors> {
 /// # Arguments
 ///
 /// * `contact_mail` - A vector of contact email addresses for certificate renewal notifications.
-/// * `identifiers` - A vector of identifiers (e.g., domain names) for which the certificate is issued.
+/// * `domain_identifiers` - A vector of identifiers (e.g., domain names) for which the certificate is issued.
 /// * `challange_type` - The type of challenge used for certificate validation.
 /// * `api_token` - The API token used for authentication with the certificate authority.
 /// * `zone_id` - The zone identifier used in DNS challenges.
@@ -361,14 +359,15 @@ pub fn read_cert(path: &Path) -> Result<X509, AcmeErrors> {
 /// * If there is an issue saving the renewed certificate.
 
 pub async fn renew_certificate(
-    contact_mail: Vec<String>,
-    identifiers: Vec<&str>,
+    contact_mails: Vec<String>,
+    domain_identifiers: Vec<&str>,
     challange_type: ChallangeType,
     api_token: &str,
     zone_id: &str,
-    dir_url: &str,
+    dir_url: &Url,
     cert: &X509,
     path: &Path,
+    renewal_threshold: i32,
 ) -> Result<(), AcmeErrors> {
     let mut interval = time::interval(time::Duration::from_secs(60 * 60 * 12));
     loop {
@@ -377,14 +376,14 @@ pub async fn renew_certificate(
         let expiration_date = get_certificate_expiration(cert)?;
         tracing::trace!("Certificate expiration date: {:?}", expiration_date);
         let now = Asn1Time::days_from_now(0)?;
-        if now.diff(expiration_date)?.days > 30 {
+        if now.diff(expiration_date)?.days > renewal_threshold {
             tracing::trace!("Certificate is still valid.");
             continue;
         } else {
             tracing::trace!("Certificate is about to expire. Renewing certificate...");
             issue_certificate(
-                contact_mail.clone(),
-                identifiers.clone(),
+                contact_mails.clone(),
+                domain_identifiers.clone(),
                 challange_type.clone(),
                 api_token,
                 zone_id,

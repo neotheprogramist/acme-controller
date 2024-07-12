@@ -1,5 +1,5 @@
 pub(crate) mod acme;
-pub mod cert_menager;
+pub mod cert_manager;
 pub(crate) mod create_jws;
 pub(crate) mod crypto;
 pub(crate) mod dns_menagment;

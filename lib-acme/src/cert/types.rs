@@ -1,5 +1,3 @@
-use std::fmt::Display;
-
 use super::errors::AcmeErrors;
 use base64::prelude::{Engine, BASE64_URL_SAFE_NO_PAD};
 use clap::ValueEnum;
@@ -8,6 +6,7 @@ use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
 use serde_with::{serde_as, DisplayFromStr};
+use std::fmt::Display;
 use url::Url;
 
 #[serde_as]
@@ -62,8 +61,6 @@ impl From<&str> for OrderStatus {
 /// # Variants
 ///
 /// - `Dns01`: Represents the DNS-01 challenge which involves creating a DNS record to prove control of a domain .
-/// - `Http01`: NOT IMPLEMENTED - Represents the HTTP-01 challenge where a file must be made available at a specific URL on the domain.
-/// - `TlsAlpn01`: NOT IMPLEMENTED - Represents the TLS-ALPN-01 challenge that involves proving control over a domain by responding to TLS connections in a specific way.
 #[derive(Debug, PartialEq, Clone)]
 pub enum ChallangeType {
     Dns01,
@@ -74,8 +71,6 @@ impl From<&str> for ChallangeType {
     fn from(challange_type: &str) -> Self {
         match challange_type {
             "dns-01" => ChallangeType::Dns01,
-            "http-01" => ChallangeType::Http01,
-            "tls-alpn-01" => ChallangeType::TlsAlpn01,
             _ => panic!("Invalid challange type"),
         }
     }
