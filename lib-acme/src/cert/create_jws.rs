@@ -17,7 +17,8 @@ use super::errors::AcmeErrors;
 #[serde(rename_all = "UPPERCASE")]
 pub(crate) enum SigningAlgorithm {
     /// ECDSA using P-256 and SHA-256
-    Es256,}
+    Es256,
+}
 impl Display for SigningAlgorithm {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

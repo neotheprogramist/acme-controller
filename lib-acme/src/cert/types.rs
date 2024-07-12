@@ -1,11 +1,11 @@
 use std::fmt::Display;
 
+use super::errors::AcmeErrors;
 use base64::prelude::{Engine, BASE64_URL_SAFE_NO_PAD};
+use clap::ValueEnum;
 use josekit::jwk::alg::ec::EcKeyPair;
 use serde::Deserialize;
 use serde::Serialize;
-use super::errors::AcmeErrors;
-use clap::ValueEnum;
 use serde_json::Value;
 use serde_with::{serde_as, DisplayFromStr};
 use url::Url;
@@ -29,11 +29,10 @@ pub(crate) struct DirectoryUrls {
     pub(crate) key_change: Option<Url>,
 }
 
-
 pub(crate) fn base64(data: &impl Serialize) -> Result<String, AcmeErrors> {
     Ok(BASE64_URL_SAFE_NO_PAD.encode(serde_json::to_vec(data)?))
 }
-#[derive(Debug, PartialEq,Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub(crate) enum OrderStatus {
     Valid,
     Invalid,
@@ -91,7 +90,7 @@ impl Display for ChallangeType {
     }
 }
 
-#[derive(Debug,Clone,Serialize,Deserialize, PartialEq,ValueEnum)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ValueEnum)]
 pub enum Environment {
     Staging,
     Production,
@@ -100,7 +99,7 @@ impl Display for Environment {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Environment::Staging => write!(f, "staging"),
-            Environment::Production => write!(f, "production")
+            Environment::Production => write!(f, "production"),
         }
     }
 }
@@ -119,32 +118,34 @@ pub(crate) struct Order {
     pub(crate) certificate: Option<Url>,
 }
 impl Order {
-    pub(crate) async fn update_status(&mut self)->Result<(),AcmeErrors>{
+    pub(crate) async fn update_status(&mut self) -> Result<(), AcmeErrors> {
         let client = reqwest::Client::new();
         let response = client.get(self.url.clone()).send().await?;
         let order_status: Value = response.json().await?;
         let status_str = order_status["status"]
-        .as_str()
-        .ok_or(AcmeErrors::ConversionError)?;
+            .as_str()
+            .ok_or(AcmeErrors::ConversionError)?;
         let status = OrderStatus::from(status_str);
         self.status = status;
         if self.status == OrderStatus::Valid {
-
-            let certificate_str =  Some(order_status["certificate"]
-            .as_str()
-            .ok_or(AcmeErrors::ConversionError)?
-            .to_owned());
-            self.certificate = Url::parse(&certificate_str.ok_or(AcmeErrors::ConversionError)?).ok();
+            let certificate_str = Some(
+                order_status["certificate"]
+                    .as_str()
+                    .ok_or(AcmeErrors::ConversionError)?
+                    .to_owned(),
+            );
+            self.certificate =
+                Url::parse(&certificate_str.ok_or(AcmeErrors::ConversionError)?).ok();
         }
         Ok(())
     }
 }
 #[derive(Debug, Clone)]
-pub(crate) struct Challange{
-    pub(crate) url:Url,
-    pub(crate) domain:String,
+pub(crate) struct Challange {
+    pub(crate) url: Url,
+    pub(crate) domain: String,
 }
-pub(crate) struct Token{
-    pub(crate) domain:String,
-    pub(crate) token:String,
+pub(crate) struct Token {
+    pub(crate) domain: String,
+    pub(crate) token: String,
 }

@@ -1,11 +1,11 @@
-use std::io::{Read, Write};
-use std::path::Path;
 use josekit::jwk::alg::ec::EcCurve;
 use josekit::{jwk::alg::ec::EcKeyPair, jwt::JwtPayload};
 use openssl::asn1::{Asn1Time, Asn1TimeRef};
 use openssl::x509::X509;
 use reqwest::{Client, Response};
 use serde_json::Value;
+use std::io::{Read, Write};
+use std::path::Path;
 use tokio::time;
 use url::Url;
 extern crate tracing;
@@ -165,7 +165,7 @@ pub(crate) async fn finalize_order(
 /// - `ChallengeNotFound`: If the specified type of challenge is not found in the authorization details.
 /// - Any other errors as defined in `AcmeErrors` that may occur during the process.
 
-pub async fn issue_cerificate(
+pub async fn issue_certificate(
     contact_mail: Vec<String>,
     identifiers: Vec<&str>,
     challange_type: ChallangeType,
@@ -290,14 +290,12 @@ pub(crate) fn get_certificate_expiration(cert: &X509) -> Result<&Asn1TimeRef, Ac
 ///
 ///
 
-
 pub fn save_cert(cert: &X509, path: &Path) -> Result<(), AcmeErrors> {
     // Save the certificate to a file
     let mut file = std::fs::File::create(path)?;
     file.write_all(cert.to_pem().unwrap().as_slice())?;
     Ok(())
 }
-
 
 /// Reads an X509 certificate from a specified file path.
 ///
@@ -320,8 +318,8 @@ pub fn save_cert(cert: &X509, path: &Path) -> Result<(), AcmeErrors> {
 /// * If there is an issue reading the certificate data from the file.
 /// * If the certificate data is not valid PEM-encoded X509 data.
 ///
-/// 
-/// 
+///
+///
 pub fn read_cert(path: &Path) -> Result<X509, AcmeErrors> {
     // Read the certificate from a file
     let mut file = std::fs::File::open(path)?;
@@ -372,7 +370,7 @@ pub async fn renew_certificate(
     cert: &X509,
     path: &Path,
 ) -> Result<(), AcmeErrors> {
-    let mut interval = time::interval(time::Duration::from_secs(60*60*12));
+    let mut interval = time::interval(time::Duration::from_secs(60 * 60 * 12));
     loop {
         interval.tick().await;
         tracing::trace!("Checking certificate expiration date...");
@@ -384,7 +382,7 @@ pub async fn renew_certificate(
             continue;
         } else {
             tracing::trace!("Certificate is about to expire. Renewing certificate...");
-            issue_cerificate(
+            issue_certificate(
                 contact_mail.clone(),
                 identifiers.clone(),
                 challange_type.clone(),

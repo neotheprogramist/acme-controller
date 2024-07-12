@@ -16,11 +16,11 @@ pub struct CliInput {
     #[arg(short = 'z', long, env)]
     pub zone_id: String,
     #[arg(short = 'e', long, env,value_enum,default_value_t = Environment::Production)]
-    pub environment: Environment, 
+    pub environment: Environment,
     #[arg(short = 'd', long, env)]
-    pub directory_url:Option<String>,
+    pub directory_url: Option<String>,
     #[arg(short = 's', long, env)]
-    pub staging_directory_url:Option<String>,
+    pub staging_directory_url: Option<String>,
     #[arg(short = 'p', long, env)]
     pub cert_path: String,
 }
@@ -49,7 +49,10 @@ impl CliInput {
         }
     }
     pub fn identifiers(&self) -> Vec<&str> {
-        self.identifiers.iter().map(String::as_str).clone().collect()
+        self.identifiers
+            .iter()
+            .map(String::as_str)
+            .clone()
+            .collect()
     }
-
 }
