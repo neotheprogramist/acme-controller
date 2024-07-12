@@ -72,4 +72,8 @@ pub enum AcmeErrors {
     AccountError,
     #[error("Error in parsing url")]
     ParseError(#[from] url::ParseError),
+    #[error("Error in opening/reading file")]
+    IOError(#[from] std::io::Error),
+    #[error("Error in certificate procedure")]
+    CertificateProcudureFailed,
 }

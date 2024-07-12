@@ -1,7 +1,12 @@
+use std::io::{Read, Write};
+use std::path::Path;
 use josekit::jwk::alg::ec::EcCurve;
 use josekit::{jwk::alg::ec::EcKeyPair, jwt::JwtPayload};
+use openssl::asn1::{Asn1Time, Asn1TimeRef};
+use openssl::x509::X509;
 use reqwest::{Client, Response};
 use serde_json::Value;
+use tokio::time;
 use url::Url;
 extern crate tracing;
 use crate::cert::acme::{new_account, new_directory, submit_order};
@@ -31,7 +36,7 @@ pub(crate) async fn perform_dns_01_challange(
     for i in 1..8 {
         tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
         tracing::trace!(
-            "Waiting for DNS changes to propagate... time passed :{} seconds",
+            "Waiting for DNS changes to propagate... time passed: {} seconds",
             i * 10
         );
     }
@@ -167,6 +172,7 @@ pub async fn issue_cerificate(
     api_token: &str,
     zone_id: &str,
     dir_url: &str,
+    path: &Path,
 ) -> Result<(), AcmeErrors> {
     let ec_key_pair = EcKeyPair::generate(EcCurve::P256)?;
     let client = Client::new();
@@ -215,11 +221,15 @@ pub async fn issue_cerificate(
         match status {
             OrderStatus::Valid => {
                 tracing::trace!("Order is completed successfully. Downloading certificate...");
-                let certificate_url = order.certificate.clone().ok_or(AcmeErrors::ConversionError)?;
+                let certificate_url = order
+                    .certificate
+                    .clone()
+                    .ok_or(AcmeErrors::ConversionError)?;
                 tracing::trace!("Certificate URL: {}", certificate_url);
                 let certificate = client.get(certificate_url).send().await?;
                 let certificate_body = certificate.text().await?;
-                println!("{certificate_body}");
+                let certificate = X509::from_pem(certificate_body.as_bytes())?;
+                save_cert(&certificate, path)?;
                 for id in order.identifiers.clone() {
                     delete_dns_record(api_token, zone_id, &id).await?;
                 }
@@ -227,7 +237,7 @@ pub async fn issue_cerificate(
             }
             OrderStatus::Invalid => {
                 tracing::trace!("Order has failed.");
-                break;
+                Err(AcmeErrors::OrderError)?;
             }
             OrderStatus::Pending => {
                 tracing::trace!("Order is pending...");
@@ -252,9 +262,139 @@ pub async fn issue_cerificate(
             }
             OrderStatus::Unknown => {
                 tracing::trace!("Order status: {:?}", status);
-                break;
+                Err(AcmeErrors::OrderError)?;
             }
         }
     }
     Ok(())
+}
+
+pub(crate) fn get_certificate_expiration(cert: &X509) -> Result<&Asn1TimeRef, AcmeErrors> {
+    let expiration_date: &Asn1TimeRef = cert.not_after();
+    return Ok(expiration_date);
+}
+
+/// Saves an X509 certificate to a specified file path.
+///
+/// # Arguments
+///
+/// * `cert` - A reference to the X509 certificate to be saved.
+/// * `path` - A reference to the file path where the certificate should be saved.
+///
+/// # Errors
+///
+/// This function will return an error of type `AcmeErrors` in the following cases:
+///
+/// * If there is an issue creating the file at the specified path.
+/// * If there is an issue writing the certificate data to the file.
+///
+///
+
+
+pub fn save_cert(cert: &X509, path: &Path) -> Result<(), AcmeErrors> {
+    // Save the certificate to a file
+    let mut file = std::fs::File::create(path)?;
+    file.write_all(cert.to_pem().unwrap().as_slice())?;
+    Ok(())
+}
+
+
+/// Reads an X509 certificate from a specified file path.
+///
+/// # Arguments
+///
+/// * `path` - A reference to the file path from which the certificate should be read.
+///
+/// # Returns
+///
+/// This function returns a `Result`:
+///
+/// * `Ok(X509)` - If the certificate is successfully read from the specified file.
+/// * `Err(AcmeErrors)` - An error of type `AcmeErrors` if the certificate cannot be read.
+///
+/// # Errors
+///
+/// This function will return an error of type `AcmeErrors` in the following cases:
+///
+/// * If there is an issue opening the file at the specified path.
+/// * If there is an issue reading the certificate data from the file.
+/// * If the certificate data is not valid PEM-encoded X509 data.
+///
+/// 
+/// 
+pub fn read_cert(path: &Path) -> Result<X509, AcmeErrors> {
+    // Read the certificate from a file
+    let mut file = std::fs::File::open(path)?;
+    let mut buffer = Vec::new();
+    file.read_to_end(&mut buffer)?;
+    Ok(X509::from_pem(&buffer)?)
+}
+
+/// Asynchronously renews a certificate based on provided contact email, identifiers, and other parameters.
+///
+/// This function continuously checks the expiration date of the given certificate and renews it if the expiration date
+/// is within 30 days. Upon renewal, the new certificate is saved to the specified path.
+///
+/// # Arguments
+///
+/// * `contact_mail` - A vector of contact email addresses for certificate renewal notifications.
+/// * `identifiers` - A vector of identifiers (e.g., domain names) for which the certificate is issued.
+/// * `challange_type` - The type of challenge used for certificate validation.
+/// * `api_token` - The API token used for authentication with the certificate authority.
+/// * `zone_id` - The zone identifier used in DNS challenges.
+/// * `dir_url` - The directory URL for the ACME server.
+/// * `cert` - A reference to the current X509 certificate.
+/// * `path` - A reference to the path where the renewed certificate should be saved.
+///
+/// # Returns
+///
+/// This function returns a `Result`:
+///
+/// * `Ok(())` - If the certificate is successfully renewed and saved.
+/// * `Err(AcmeErrors)` - An error of type `AcmeErrors` if the certificate cannot be renewed or saved.
+///
+/// # Errors
+///
+/// This function will return an error of type `AcmeErrors` in the following cases:
+///
+/// * If there is an issue issuing the certificate.
+/// * If there is an issue retrieving the certificate's expiration date.
+/// * If there is an issue determining the current date.
+/// * If there is an issue saving the renewed certificate.
+
+pub async fn renew_certificate(
+    contact_mail: Vec<String>,
+    identifiers: Vec<&str>,
+    challange_type: ChallangeType,
+    api_token: &str,
+    zone_id: &str,
+    dir_url: &str,
+    cert: &X509,
+    path: &Path,
+) -> Result<(), AcmeErrors> {
+    let mut interval = time::interval(time::Duration::from_secs(60*60*12));
+    loop {
+        interval.tick().await;
+        tracing::trace!("Checking certificate expiration date...");
+        let expiration_date = get_certificate_expiration(&cert)?;
+        tracing::trace!("Certificate expiration date: {:?}", expiration_date);
+        let now = Asn1Time::days_from_now(0)?;
+        if now.diff(&expiration_date)?.days > 30 {
+            tracing::trace!("Certificate is still valid.");
+            continue;
+        } else {
+            tracing::trace!("Certificate is about to expire. Renewing certificate...");
+            issue_cerificate(
+                contact_mail.clone(),
+                identifiers.clone(),
+                challange_type.clone(),
+                api_token,
+                zone_id,
+                dir_url,
+                path,
+            )
+            .await?;
+            save_cert(cert, path)?;
+        }
+    }
 }

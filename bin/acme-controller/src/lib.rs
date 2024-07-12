@@ -21,6 +21,8 @@ pub struct CliInput {
     pub directory_url:Option<String>,
     #[arg(short = 's', long, env)]
     pub staging_directory_url:Option<String>,
+    #[arg(short = 'p', long, env)]
+    pub cert_path: String,
 }
 
 impl CliInput {
