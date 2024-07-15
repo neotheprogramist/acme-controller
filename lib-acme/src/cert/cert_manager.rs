@@ -30,6 +30,16 @@ pub struct CertificateManager {
     renewal_threshold: i32,
 }
 impl CertificateManager {
+    /// Constructs a new `CertificateManager`.
+    ///
+    /// # Parameters
+    /// * `contact_mails` - A list of email addresses for contact.
+    /// * `domain_identifiers` - A list of domain names that the manager will handle.
+    /// * `challenge_type` - The type of ACME challenge to use.
+    /// * `api_token` - API token for DNS provider interactions.
+    /// * `zone_id` - The identifier for the DNS zone.
+    /// * `dir_url` - The ACME directory URL.
+    /// * `renewal_threshold` - The number of days before expiration at which renewal should be attempted.
     pub fn new(
         contact_mails: Vec<String>,
         domain_identifiers: Vec<String>,
@@ -51,6 +61,10 @@ impl CertificateManager {
             renewal_threshold,
         }
     }
+    /// Issues a new certificate using the ACME protocol.
+    ///
+    /// # Returns
+    /// A `Result<(), AcmeErrors>` indicating success or an error during the certificate issuance process.
     pub async fn issue_certificate(&self) -> Result<(), AcmeErrors> {
         let ec_key_pair = EcKeyPair::generate(EcCurve::P256)?;
         let client = Client::new();
@@ -162,6 +176,13 @@ impl CertificateManager {
             }
         }
     }
+    // Renews the certificate when necessary, based on expiration checks.
+    ///
+    /// # Parameters
+    /// * `tx` - A `watch::Sender` used to notify other components of the application about the renewal.
+    ///
+    /// # Returns
+    /// A `Result<(), AcmeErrors>` indicating the success or failure of the renewal operation.
     pub async fn renew_certificate(&self, tx: watch::Sender<()>) -> Result<(), AcmeErrors> {
         let mut interval = time::interval(time::Duration::from_secs(60 * 60 * 12));
         loop {
