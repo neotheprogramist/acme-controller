@@ -4,11 +4,12 @@ use serde::Serialize;
 use serde_json::Value;
 use url::Url;
 extern crate tracing;
-use super::cert_manager::fetch_authorizations;
 use super::errors::AcmeErrors;
 use super::http_request::post;
-use super::types::{AccountCredentials, Order, OrderStatus};
+use super::types::{AccountCredentials, Challange, ChallangeType, Order, OrderStatus, Token};
 use super::{create_jws::create_jws, types::DirectoryUrls};
+use crate::cert::crypto::get_key_authorization;
+use crate::cert::dns_menagment::post_dns_record;
 const REPLAY_NONCE: &str = "replay-nonce";
 
 #[derive(Serialize)]
@@ -161,7 +162,127 @@ pub(crate) async fn parse_order(response: reqwest::Response) -> Result<Order, Ac
         certificate: None,
     })
 }
+pub(crate) async fn perform_dns_01_challange(
+    tokens: Vec<Token>,
+    ec_key_pair: EcKeyPair,
+    api_token: &str,
+    zone_id: &str,
+) -> Result<(), AcmeErrors> {
+    for token in tokens {
+        let encoded_digest = get_key_authorization(&token.token.clone(), &ec_key_pair.clone())?;
+        post_dns_record(encoded_digest.clone(), &token.domain, api_token, zone_id).await?;
+    }
+    // Post the DNS record
+    tracing::trace!("DNS record posted, waiting for the DNS changes to propagate...");
+    // Wait for the DNS changes to propagate
+    for i in 1..8 {
+        tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
+        tracing::trace!(
+            "Waiting for DNS changes to propagate... time passed: {} seconds",
+            i * 10
+        );
+    }
+    tracing::trace!("DNS changes should have propagated by now");
+    Ok(())
+}
+pub(crate) fn fetch_authorizations(response: &Value) -> Result<Vec<String>, AcmeErrors> {
+    let authorizations: Result<Vec<String>, AcmeErrors> = response["authorizations"]
+        .as_array()
+        .ok_or(AcmeErrors::ConversionError)?
+        .iter()
+        .map(|authz| {
+            authz
+                .as_str()
+                .ok_or(AcmeErrors::ConversionError)
+                .map(ToString::to_string)
+        })
+        .collect();
+    authorizations
+}
+pub(crate) async fn choose_challanges(
+    authorizations: Vec<String>,
+    challange_type: ChallangeType,
+) -> Result<Vec<Challange>, AcmeErrors> {
+    let client = Client::new();
+    let mut challanges: Vec<Challange> = Vec::new();
+    for authz in authorizations {
+        let response = client.get(authz).send().await?;
+        let authz = response.json::<Value>().await?;
+        let challange = authz["challenges"]
+            .as_array()
+            .ok_or(AcmeErrors::ConversionError)?
+            .iter()
+            .find(|challange| challange["type"] == challange_type.to_string())
+            .ok_or(AcmeErrors::ChallangeNotFound)?;
+        let domain = authz["identifier"]["value"]
+            .as_str()
+            .ok_or(AcmeErrors::ConversionError)?
+            .to_string();
+        let url_str = challange["url"]
+            .as_str()
+            .ok_or(AcmeErrors::ConversionError)?;
+        let url = Url::parse(url_str).map_err(|_| AcmeErrors::ConversionError)?;
+        challanges.push(Challange { url, domain });
+    }
+    Ok(challanges)
+}
+pub(crate) async fn get_challanges_tokens(
+    challanges: Vec<Challange>,
+) -> Result<Vec<Token>, AcmeErrors> {
+    let client = Client::new();
+    let mut details: Vec<Token> = Vec::new();
+    for challange in challanges {
+        let response = client.get(challange.url).send().await?;
+        let detail = response.json::<Value>().await?;
+        let token = detail["token"]
+            .as_str()
+            .ok_or(AcmeErrors::ConversionError)?
+            .to_string();
+        details.push(Token {
+            domain: challange.domain,
+            token,
+        });
+    }
+    Ok(details)
+}
+pub(crate) async fn respond_to_challange(
+    challange_url: Url,
+    ec_key_pair: EcKeyPair,
+    kid: Url,
+) -> Result<Response, AcmeErrors> {
+    let client = Client::new();
+    let payload = JwtPayload::new();
+    let nonce = new_nonce(&client, challange_url.clone()).await?;
+    let body = create_jws(
+        &nonce,
+        &payload,
+        challange_url.clone(),
+        &ec_key_pair,
+        Some(kid),
+    )?;
+    post(&client, challange_url, body).await
+}
 
+pub(crate) async fn finalize_order(
+    csr: String,
+    urls: DirectoryUrls,
+    ec_key_pair: EcKeyPair,
+    kid: Url,
+    finalization_url: Url,
+) -> Result<Response, AcmeErrors> {
+    let client = Client::new();
+    let mut payload = JwtPayload::new();
+    let nonce = new_nonce(&client, urls.clone().new_nonce).await?;
+    let _ = payload.set_claim("csr", Some(serde_json::Value::String(csr)));
+    let body = create_jws(
+        &nonce,
+        &payload,
+        finalization_url.clone(),
+        &ec_key_pair,
+        Some(kid),
+    )?;
+    post(&client, finalization_url, body).await
+}
 #[cfg(test)]
 mod tests {
     use std::{str::FromStr, vec};

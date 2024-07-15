@@ -1,7 +1,8 @@
 use clap::Parser;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 use url::Url;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
 #[derive(Parser, Debug, Serialize, Deserialize)]
 #[clap(author, version, about, long_about = None)]
 pub struct CliInput {
@@ -15,8 +16,6 @@ pub struct CliInput {
     pub zone_id: String,
     #[arg(short = 'u', long, env)]
     pub url: Url,
-    #[arg(short = 'p', long, env)]
-    pub cert_path: PathBuf,
     #[arg(short = 'r', long, env)]
     pub renewal_threshold: i32,
 }
@@ -51,4 +50,14 @@ impl CliInput {
             .clone()
             .collect()
     }
+}
+
+pub fn init_logging() {
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "trace".into()),
+        )
+        .with(tracing_subscriber::fmt::layer())
+        .init();
 }
