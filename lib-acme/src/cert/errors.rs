@@ -81,4 +81,10 @@ pub enum AcmeErrors {
 
     #[error("Error in certificate procedure")]
     CertificateProcudureFailed,
+    
+    #[error("Poisoned mutex")]
+    MutexPoisonedError(String),
+   
+   #[error("Error in channeling")]
+    ChannelError(String),
 }
