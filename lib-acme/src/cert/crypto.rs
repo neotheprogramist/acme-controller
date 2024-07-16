@@ -26,7 +26,7 @@ pub(crate) fn get_key_authorization(
     let key_auth_digest = hash(MessageDigest::sha256(), key_authorization.as_bytes())?;
     Ok(BASE64_URL_SAFE_NO_PAD.encode(key_auth_digest))
 }
-pub(crate) fn generate_csr(domain: Vec<&str>) -> Result<String, AcmeErrors> {
+pub(crate) fn generate_csr(domain: Vec<&str>) -> Result<(String,Vec<u8>), AcmeErrors> {
     let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1)?;
     let ec_key = EcKey::generate(&group)?;
     let pkey = PKey::from_ec_key(ec_key)?;
@@ -54,7 +54,7 @@ pub(crate) fn generate_csr(domain: Vec<&str>) -> Result<String, AcmeErrors> {
     let req = req_builder.build();
     let csr_der = req.to_der()?;
     let csr_base64 = BASE64_URL_SAFE_NO_PAD.encode(csr_der);
-    Ok(csr_base64)
+    Ok((csr_base64,pkey.private_key_to_pem_pkcs8()?))
 }
 
 pub(crate) fn get_thumbprint(ec_key_pair: &EcKeyPair) -> Result<String, AcmeErrors> {

@@ -26,7 +26,7 @@ pub struct CertificateManager {
     zone_id: String,
     dir_url: Url,
     pub cert: Arc<Mutex<Option<X509>>>,
-    pub ec_key_pair: Arc<Mutex<Option<EcKeyPair>>>,
+    pub key_pem: Arc<Mutex<Option<Vec<u8>>>>,
     renewal_threshold: i32,
 }
 impl CertificateManager {
@@ -57,7 +57,7 @@ impl CertificateManager {
             zone_id,
             dir_url,
             cert: Arc::new(Mutex::new(None)),
-            ec_key_pair: Arc::new(Mutex::new(None)),
+            key_pem: Arc::new(Mutex::new(None)),
             renewal_threshold,
         }
     }
@@ -125,9 +125,7 @@ impl CertificateManager {
                     let certificate_body = certificate.text().await?;
                     let certificate = X509::from_pem(certificate_body.as_bytes())?;
                     let mut cert_guard = self.cert.lock().await;                               
-                    let mut key_pair_guard = self.ec_key_pair.lock().await;
                     *cert_guard = Some(certificate);
-                    *key_pair_guard = Some(ec_key_pair);
                     for id in order.identifiers.clone() {
                         delete_dns_record(&self.api_token, &self.zone_id, &id).await?;
                     }
@@ -146,8 +144,10 @@ impl CertificateManager {
                     let finalization_url = order.finalize_url.clone();
                     let csr =
                         generate_csr(self.domain_identifiers.iter().map(|s| s.as_str()).collect())?;
+                    let mut key_pair_guard = self.key_pem.lock().await;
+                    *key_pair_guard = Some(csr.1);
                     let _response = finalize_order(
-                        csr,
+                        csr.0,
                         urls.clone(),
                         account.account_key.clone(),
                         account.account_url.clone(),
@@ -200,8 +200,8 @@ impl CertificateManager {
         let locked_cert = self.cert.lock().await;
         Ok(locked_cert.as_ref().cloned())
     }
-    pub async fn get_key_pair(&self) -> Result<Option<EcKeyPair>,AcmeErrors> {
-        let locked_key = self.ec_key_pair.lock().await;
+    pub async fn get_key_pem(&self) -> Result<Option<Vec<u8>>,AcmeErrors> {
+        let locked_key = self.key_pem.lock().await;
         Ok(locked_key.as_ref().cloned())
     }
 }
