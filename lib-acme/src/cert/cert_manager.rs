@@ -3,7 +3,8 @@ use josekit::jwk::alg::ec::EcKeyPair;
 use openssl::asn1::{Asn1Time, Asn1TimeRef};
 use openssl::x509::X509;
 use reqwest::Client;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use tokio::sync::watch;
 use tokio::time;
 use url::Url;
@@ -124,18 +125,8 @@ impl CertificateManager {
                     let certificate = client.get(certificate_url).send().await?;
                     let certificate_body = certificate.text().await?;
                     let certificate = X509::from_pem(certificate_body.as_bytes())?;
-                    let mut cert_guard = self.cert.lock().map_err(|e| {
-                        AcmeErrors::MutexPoisonedError(format!(
-                            "Failed to acquire cert lock: {}",
-                            e
-                        ))
-                    })?;
-                    let mut key_pair_guard = self.ec_key_pair.lock().map_err(|e| {
-                        AcmeErrors::MutexPoisonedError(format!(
-                            "Failed to acquire key pair lock: {}",
-                            e
-                        ))
-                    })?;
+                    let mut cert_guard = self.cert.lock().await;                               
+                    let mut key_pair_guard = self.ec_key_pair.lock().await;
                     *cert_guard = Some(certificate);
                     *key_pair_guard = Some(ec_key_pair);
                     for id in order.identifiers.clone() {
@@ -189,7 +180,7 @@ impl CertificateManager {
             interval.tick().await;
             tracing::trace!("Checking certificate expiration date...");
             let cert = self
-                .get_cert()?
+                .get_cert().await?
                 .ok_or(AcmeErrors::MutexPoisonedError(
                     "Failed to acquire cert lock".to_string(),
                 ))?;
@@ -208,16 +199,12 @@ impl CertificateManager {
             }
         }
     }
-    pub fn get_cert(&self) -> Result<Option<X509>,AcmeErrors> {
-        let locked_cert = self.cert.lock().map_err(|e| {
-            AcmeErrors::MutexPoisonedError(format!("Failed to acquire cert lock: {}", e))
-        })?;
+    pub async fn get_cert(&self) -> Result<Option<X509>,AcmeErrors> {
+        let locked_cert = self.cert.lock().await;
         Ok(locked_cert.as_ref().cloned())
     }
-    pub fn get_key_pair(&self) -> Result<Option<EcKeyPair>,AcmeErrors> {
-        let locked_key = self.ec_key_pair.lock().map_err(|e| {
-            AcmeErrors::MutexPoisonedError(format!("Failed to acquire cert lock: {}", e))
-        })?;
+    pub async fn get_key_pair(&self) -> Result<Option<EcKeyPair>,AcmeErrors> {
+        let locked_key = self.ec_key_pair.lock().await;
         Ok(locked_key.as_ref().cloned())
     }
 }
