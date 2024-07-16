@@ -3,9 +3,10 @@ use josekit::jwk::alg::ec::EcKeyPair;
 use openssl::asn1::{Asn1Time, Asn1TimeRef};
 use openssl::x509::X509;
 use reqwest::Client;
+use tokio::time::sleep;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::Mutex;
-use tokio::time;
 use url::Url;
 extern crate tracing;
 use super::errors::AcmeErrors;
@@ -174,9 +175,7 @@ impl CertificateManager {
     /// # Returns
     /// A `Result<(), AcmeErrors>` indicating the success or failure of the renewal operation.
     pub async fn renew_certificate(&self) -> Result<(), AcmeErrors> {
-        let mut interval = time::interval(time::Duration::from_secs(60 * 60 * 12));
         loop {
-            interval.tick().await;
             tracing::trace!("Checking certificate expiration date...");
             let cert = self
                 .get_cert().await?
@@ -186,7 +185,10 @@ impl CertificateManager {
             let expiration_date = get_certificate_expiration(&cert)?;
             tracing::trace!("Certificate expiration date: {:?}", expiration_date);
             let now = Asn1Time::days_from_now(0)?;
-            if now.diff(expiration_date)?.days > self.renewal_threshold {
+            let days_until_expiration = now.diff(expiration_date)?.days;
+            if days_until_expiration > self.renewal_threshold {
+                let sleep_duration = (days_until_expiration-self.renewal_threshold).saturating_mul(24*60*60);
+                sleep(Duration::from_secs(sleep_duration as u64)).await;
                 tracing::trace!("Certificate is still valid.");
                 continue;
             } else {
