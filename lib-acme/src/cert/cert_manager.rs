@@ -5,7 +5,6 @@ use openssl::x509::X509;
 use reqwest::Client;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tokio::sync::watch;
 use tokio::time;
 use url::Url;
 extern crate tracing;
@@ -174,7 +173,7 @@ impl CertificateManager {
     ///
     /// # Returns
     /// A `Result<(), AcmeErrors>` indicating the success or failure of the renewal operation.
-    pub async fn renew_certificate(&self, tx: watch::Sender<()>) -> Result<(), AcmeErrors> {
+    pub async fn renew_certificate(&self) -> Result<(), AcmeErrors> {
         let mut interval = time::interval(time::Duration::from_secs(60 * 60 * 12));
         loop {
             interval.tick().await;
@@ -193,9 +192,7 @@ impl CertificateManager {
             } else {
                 tracing::trace!("Certificate is about to expire. Renewing certificate...");
                 self.issue_certificate().await?;
-                tx.send(()).map_err(|e| {
-                    AcmeErrors::ChannelError(format!("Failed to send watch signal: {}", e))
-                })?;    
+                break Ok(());
             }
         }
     }
