@@ -1,7 +1,7 @@
 use clap::Parser;
 use serde::{Deserialize, Serialize};
 use url::Url;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 #[derive(Parser, Debug, Serialize, Deserialize)]
 #[clap(author, version, about, long_about = None)]
@@ -55,8 +55,8 @@ impl CliInput {
 pub fn init_logging() {
     tracing_subscriber::registry()
         .with(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "trace".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().or(EnvFilter::try_new("lib_acme=trace,hyper_util=off"))
+                .unwrap_or_else(|_| "info".into()),
         )
         .with(tracing_subscriber::fmt::layer())
         .init();
